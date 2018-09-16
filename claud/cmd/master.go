@@ -17,6 +17,6 @@ var masterCmd = &cobra.Command{
 }
 
 func masterProcess(cmd *cobra.Command, args []string) {
-	fmt.Println("Launching master process")
+	fmt.Println("Launching master process...")
 	master.LaunchMaster()
 }
