@@ -2,7 +2,7 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/juanfresia/claud/claud/master"
+	"github.com/juanfresia/claud/master"
 	"github.com/spf13/cobra"
 )
 
