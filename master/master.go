@@ -8,34 +8,54 @@ import (
 	"github.com/satori/go.uuid"
 )
 
-type Master struct {
-	uuid  uuid.UUID
-	count int
+// --------------------------- Master struct ---------------------------
+
+type master struct {
+	uuid      uuid.UUID
+	count     int
+	toRingo   chan string
+	fromRingo chan string
 }
 
-func (m *Master) statusHandler(w http.ResponseWriter, r *http.Request) {
+func newMaster() *master {
+	m := &master{uuid: uuid.NewV4(), count: 0}
+
+	m.toRingo = make(chan string, 10)
+	m.fromRingo = make(chan string, 10)
+
+	go ringo.StartRing(m.uuid, m.toRingo, m.fromRingo)
+	//go m.receiveFromRingo()
+	fmt.Println("New master launched with UUID:", m.uuid.String())
+	return m
+}
+
+func (m *master) statusHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hi there, my uuid is %v\n", m.uuid)
 	fmt.Fprintf(w, "I've received %v messages\n", m.count)
 }
 
-func LaunchMaster() {
-	master := &Master{uuid: uuid.NewV4(), count: 0}
-
-	toRingo := make(chan string, 10)
-	fromRingo := make(chan string, 10)
-
-	go ringo.StartRing(toRingo, fromRingo)
-	go receiveFromRingo(fromRingo, master)
-
-	http.HandleFunc("/", master.statusHandler)
-	http.ListenAndServe(":8081", nil)
+// TODO: Refactor this code below with nice custom messages
+func (m *master) aliveMasters(w http.ResponseWriter, r *http.Request) {
+	m.toRingo <- "MASTERS"
+	msg := <-m.fromRingo
+	fmt.Fprintf(w, msg)
 }
 
-func receiveFromRingo(fromRingo <-chan string, master *Master) {
+func (m *master) receiveFromRingo() {
 	for {
 		fmt.Println("------------------------------------------------")
-		msg := <-fromRingo
+		msg := <-m.fromRingo
 		fmt.Println("Received message: " + msg)
-		master.count++
+		m.count++
 	}
+}
+
+// --------------------------- Main function ---------------------------
+
+func LaunchMaster(masterIp, port string) {
+	m := newMaster()
+
+	http.HandleFunc("/", m.statusHandler)
+	http.HandleFunc("/masters", m.aliveMasters)
+	http.ListenAndServe(masterIp+":"+port, nil)
 }
