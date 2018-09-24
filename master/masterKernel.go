@@ -48,12 +48,16 @@ type MasterKernel struct {
 	keepAliveCh  chan MasterData
 	deadMasterCh chan string
 	anarchyTmr   *time.Timer
+
+	leaderUuid *string
 }
 
-func newKernel() MasterKernel {
+func newMasterKernel() MasterKernel {
 	k := &MasterKernel{uuid: uuid.NewV4()}
 	k.state = new(MasterState)
+	k.leaderUuid = new(string)
 	*k.state = ANARCHY
+	*k.leaderUuid = "NO LEADER"
 	k.aliveNodes = make(map[string]MasterData)
 
 	// This ones should be buffered to prevent for message drops
@@ -111,7 +115,7 @@ func (k *MasterKernel) trackMasterNode(masterUuid string, addr *net.UDPAddr) boo
 	if present {
 		k.aliveNodes[masterUuid].timer.Stop()
 	} else {
-		fmt.Println("A new master! Let's meet them")
+		fmt.Println("A new master has appeared! Dropping current leader.")
 		new_master = true
 	}
 
@@ -132,7 +136,7 @@ func (k *MasterKernel) killDeadMaster(masterUuid string) {
 // This function should only be called in the kernel main thread
 // to prevent race conditions
 func (k *MasterKernel) resetAnarchyTimer() {
-	fmt.Println("Something went horribly wrong, embrace ANARCHY!")
+	fmt.Println("No leader detected, embrace ANARCHY!")
 
 	if *k.state == ANARCHY {
 		// Need to stop timer
@@ -141,11 +145,12 @@ func (k *MasterKernel) resetAnarchyTimer() {
 		}
 	}
 	*k.state = ANARCHY
+	*k.leaderUuid = "NO LEADER"
 	k.anarchyTmr = time.NewTimer(learningTmr)
 }
 
 func (k *MasterKernel) chooseLeader() {
-	fmt.Println("Hey, anarchy has ended. Time to choose a leader")
+	fmt.Println("Anarchy has ended. Choosing a new leader")
 	leader := k.aliveNodes[k.uuid.String()]
 	for _, master := range k.aliveNodes {
 		if master.uuid <= leader.uuid {
@@ -153,14 +158,15 @@ func (k *MasterKernel) chooseLeader() {
 		}
 	}
 
-	fmt.Printf("Hooray for the new leader: %v\n", leader.uuid)
+	*k.leaderUuid = leader.uuid
+	fmt.Printf("We all hail the new leader: %v\n", leader.uuid)
 	if leader.uuid == k.uuid.String() {
 		fmt.Println("I am the leader")
 		*k.state = LEADER
 	} else {
 		*k.state = NOT_LEADER
 	}
-	fmt.Printf("New state: %v\n", k.state.String())
+	fmt.Printf("New leader state: %v\n", k.state.String())
 }
 
 func (k *MasterKernel) eventLoop() {
@@ -188,6 +194,10 @@ func (k *MasterKernel) GetMasters() string {
 	return ans
 }
 
-func (k *MasterKernel) GetState() string {
+func (k *MasterKernel) GetLeaderState() string {
 	return k.state.String()
+}
+
+func (k *MasterKernel) GetLeaderId() string {
+	return *k.leaderUuid
 }

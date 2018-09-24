@@ -11,18 +11,19 @@ type MasterServer struct {
 	kernel MasterKernel
 }
 
-func newMaster() *MasterServer {
+func newMasterServer() *MasterServer {
 	m := &MasterServer{}
-	m.kernel = newKernel()
+	m.kernel = newMasterKernel()
 	return m
 }
 
 func (m *MasterServer) statusHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, my uuid is %v\n", m.kernel.uuid)
+	fmt.Fprintf(w, "Hi there, I am master %v\n", m.kernel.uuid)
 }
 
 func (m *MasterServer) leaderStatus(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "%v\n", m.kernel.GetState())
+	fmt.Fprintf(w, "My leader status: %v\n", m.kernel.GetLeaderState())
+	fmt.Fprintf(w, "Leader UUID is: %s\n", m.kernel.GetLeaderId())
 }
 
 func (m *MasterServer) aliveMasters(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +34,7 @@ func (m *MasterServer) aliveMasters(w http.ResponseWriter, r *http.Request) {
 // --------------------------- Main function ---------------------------
 
 func LaunchMaster(masterIp, port string) {
-	m := newMaster()
+	m := newMasterServer()
 
 	http.HandleFunc("/", m.statusHandler)
 	http.HandleFunc("/masters", m.aliveMasters)
