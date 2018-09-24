@@ -19,7 +19,6 @@ func newMaster() *MasterServer {
 
 func (m *MasterServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hi there, my uuid is %v\n", m.kernel.uuid)
-	fmt.Fprintf(w, "I've received %v messages\n", m.kernel.count)
 }
 
 func (m *MasterServer) aliveMasters(w http.ResponseWriter, r *http.Request) {
