@@ -3,51 +3,28 @@ package master
 import (
 	"fmt"
 	"net/http"
-
-	"github.com/juanfresia/claud/master/ringo"
-	"github.com/satori/go.uuid"
 )
 
 // --------------------------- Master struct ---------------------------
 
-type master struct {
-	uuid      uuid.UUID
-	count     int
-	toRingo   chan string
-	fromRingo chan string
+type MasterServer struct {
+	kernel MasterKernel
 }
 
-func newMaster() *master {
-	m := &master{uuid: uuid.NewV4(), count: 0}
-
-	m.toRingo = make(chan string, 10)
-	m.fromRingo = make(chan string, 10)
-
-	go ringo.StartRing(m.uuid, m.toRingo, m.fromRingo)
-	//go m.receiveFromRingo()
-	fmt.Println("New master launched with UUID:", m.uuid.String())
+func newMaster() *MasterServer {
+	m := &MasterServer{}
+	m.kernel = newKernel()
 	return m
 }
 
-func (m *master) statusHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, my uuid is %v\n", m.uuid)
-	fmt.Fprintf(w, "I've received %v messages\n", m.count)
+func (m *MasterServer) statusHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hi there, my uuid is %v\n", m.kernel.uuid)
+	fmt.Fprintf(w, "I've received %v messages\n", m.kernel.count)
 }
 
-// TODO: Refactor this code below with nice custom messages
-func (m *master) aliveMasters(w http.ResponseWriter, r *http.Request) {
-	m.toRingo <- "MASTERS"
-	msg := <-m.fromRingo
+func (m *MasterServer) aliveMasters(w http.ResponseWriter, r *http.Request) {
+	msg := m.kernel.GetMasters()
 	fmt.Fprintf(w, msg)
-}
-
-func (m *master) receiveFromRingo() {
-	for {
-		fmt.Println("------------------------------------------------")
-		msg := <-m.fromRingo
-		fmt.Println("Received message: " + msg)
-		m.count++
-	}
 }
 
 // --------------------------- Main function ---------------------------
