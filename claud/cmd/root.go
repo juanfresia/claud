@@ -9,8 +9,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "claud",
-	Short: "This is the short description",
-	Long:  "This is the long description. Multiline support.",
+	Short: "CLAUD: Cluster for Sistemas Distribuidos II, FIUBA.",
+	Long:  "CLAUD: Cluster for Sistemas Distribuidos II, FIUBA.",
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Hello world!")
 	},
