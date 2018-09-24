@@ -24,6 +24,16 @@ const (
 	ANARCHY
 )
 
+func (ms MasterState) String() string {
+	strMap := [...]string{
+		"LEADER",
+		"NOT LEADER",
+		"IN ANARCHY",
+	}
+
+	return strMap[ms]
+}
+
 type MasterData struct {
 	uuid  string
 	addr  *net.UDPAddr
@@ -32,9 +42,8 @@ type MasterData struct {
 
 type MasterKernel struct {
 	uuid       uuid.UUID
-	count      int
 	aliveNodes map[string]MasterData
-	state      MasterState
+	state      *MasterState
 
 	keepAliveCh  chan MasterData
 	deadMasterCh chan string
@@ -42,7 +51,9 @@ type MasterKernel struct {
 }
 
 func newKernel() MasterKernel {
-	k := &MasterKernel{uuid: uuid.NewV4(), state: ANARCHY}
+	k := &MasterKernel{uuid: uuid.NewV4()}
+	k.state = new(MasterState)
+	*k.state = ANARCHY
 	k.aliveNodes = make(map[string]MasterData)
 
 	// This ones should be buffered to prevent for message drops
@@ -122,10 +133,34 @@ func (k *MasterKernel) killDeadMaster(masterUuid string) {
 // to prevent race conditions
 func (k *MasterKernel) resetAnarchyTimer() {
 	fmt.Println("Something went horribly wrong, embrace ANARCHY!")
-	if !k.anarchyTmr.Stop() {
-		<-k.anarchyTmr.C
+
+	if *k.state == ANARCHY {
+		// Need to stop timer
+		if !k.anarchyTmr.Stop() {
+			<-k.anarchyTmr.C
+		}
 	}
-	k.anarchyTmr.Reset(learningTmr)
+	*k.state = ANARCHY
+	k.anarchyTmr = time.NewTimer(learningTmr)
+}
+
+func (k *MasterKernel) chooseLeader() {
+	fmt.Println("Hey, anarchy has ended. Time to choose a leader")
+	leader := k.aliveNodes[k.uuid.String()]
+	for _, master := range k.aliveNodes {
+		if master.uuid <= leader.uuid {
+			leader = master
+		}
+	}
+
+	fmt.Printf("Hooray for the new leader: %v\n", leader.uuid)
+	if leader.uuid == k.uuid.String() {
+		fmt.Println("I am the leader")
+		*k.state = LEADER
+	} else {
+		*k.state = NOT_LEADER
+	}
+	fmt.Printf("New state: %v\n", k.state.String())
 }
 
 func (k *MasterKernel) eventLoop() {
@@ -139,7 +174,7 @@ func (k *MasterKernel) eventLoop() {
 			k.killDeadMaster(corpse)
 			k.resetAnarchyTimer()
 		case <-k.anarchyTmr.C:
-			fmt.Println("Hey, anarchy has ended. Time to choose a leader")
+			k.chooseLeader()
 		}
 	}
 }
@@ -151,4 +186,8 @@ func (k *MasterKernel) GetMasters() string {
 		ans += ("UUID: " + uuid + " IP:PORT: " + ipPort + "\n")
 	}
 	return ans
+}
+
+func (k *MasterKernel) GetState() string {
+	return k.state.String()
 }
