@@ -2,11 +2,16 @@ package master
 
 import (
 	"fmt"
+	"log"
 	"net"
+	"os"
 	"time"
 
 	"github.com/satori/go.uuid"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+// ----------------------- Data type definitions ----------------------
 
 const (
 	multicastAddr   = "224.0.0.28:1504"
@@ -15,6 +20,8 @@ const (
 	defunctTmr      = 10 * time.Second
 	learningTmr     = 20 * time.Second
 )
+
+const PRODUCE_LOGS = true
 
 type MasterState int
 
@@ -52,6 +59,31 @@ type MasterKernel struct {
 	leaderUuid *string
 }
 
+var kernelLog *log.Logger
+
+// --------------------------- Functions --------------------------
+
+func startupKernelLog(logFile string) {
+	if PRODUCE_LOGS {
+		l, err := os.OpenFile(logFile, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0666)
+
+		if err != nil {
+			fmt.Printf("Error opening logfile: %v", err)
+			os.Exit(1)
+		}
+
+		kernelLog = log.New(l, "", log.Ldate|log.Ltime)
+		kernelLog.SetOutput(&lumberjack.Logger{
+			Filename:   logFile,
+			MaxSize:    1,  // MB after which new logfile is created
+			MaxBackups: 3,  // old logfiles kept at the same time
+			MaxAge:     10, // days until automagically delete logfiles
+		})
+	} else {
+		kernelLog = log.New(os.Stdout, "", log.Ldate|log.Ltime)
+	}
+}
+
 func newMasterKernel() MasterKernel {
 	k := &MasterKernel{uuid: uuid.NewV4()}
 	k.state = new(MasterState)
@@ -65,18 +97,21 @@ func newMasterKernel() MasterKernel {
 	k.keepAliveCh = make(chan MasterData, 10)
 	k.deadMasterCh = make(chan string, 10)
 
+	startupKernelLog("./kernel-" + k.uuid.String()[:8] + ".log")
+
 	k.anarchyTmr = time.NewTimer(learningTmr)
 
 	go k.keepAliveSender(multicastAddr)
 	go k.listenMulticastUDP(multicastAddr)
 	go k.eventLoop()
+	fmt.Println("Master Kernel is up!")
 	return *k
 }
 
 func (k *MasterKernel) keepAliveSender(multicastAddr string) {
 	addr, err := net.ResolveUDPAddr("udp", multicastAddr)
 	if err != nil {
-		fmt.Println("Error:", err)
+		kernelLog.Printf("ERROR: UDP socket creation failed: %v", err)
 	}
 	c, err := net.DialUDP("udp", nil, addr)
 	msg := k.uuid.String()
@@ -90,7 +125,7 @@ func (k *MasterKernel) keepAliveSender(multicastAddr string) {
 func (k *MasterKernel) listenMulticastUDP(multicastAddr string) {
 	addr, err := net.ResolveUDPAddr("udp", multicastAddr)
 	if err != nil {
-		fmt.Println("Error:", err)
+		kernelLog.Printf("ERROR: UDP socket creation failed: %v", err)
 	}
 	l, err := net.ListenMulticastUDP("udp", nil, addr)
 	l.SetReadBuffer(maxDatagramSize)
@@ -100,7 +135,7 @@ func (k *MasterKernel) listenMulticastUDP(multicastAddr string) {
 	for {
 		n, src, err := l.ReadFromUDP(msg)
 		if err != nil {
-			fmt.Println("ReadFromUDP failed:", err)
+			kernelLog.Printf("ERROR: ReadFromUDP failed: %v", err)
 		}
 		uuidReceived := string(msg[:n])
 		data := MasterData{uuid: uuidReceived, addr: src}
@@ -115,7 +150,7 @@ func (k *MasterKernel) trackMasterNode(masterUuid string, addr *net.UDPAddr) boo
 	if present {
 		k.aliveNodes[masterUuid].timer.Stop()
 	} else {
-		fmt.Println("A new master has appeared! Dropping current leader.")
+		kernelLog.Printf("A new master has appeared! Dropping current leader.")
 		new_master = true
 	}
 
@@ -129,14 +164,14 @@ func (k *MasterKernel) trackMasterNode(masterUuid string, addr *net.UDPAddr) boo
 }
 
 func (k *MasterKernel) killDeadMaster(masterUuid string) {
-	fmt.Println("Warning: Master " + masterUuid + " has died!")
+	kernelLog.Printf("WARNING: Master " + masterUuid + " has died!")
 	delete(k.aliveNodes, masterUuid)
 }
 
 // This function should only be called in the kernel main thread
 // to prevent race conditions
 func (k *MasterKernel) resetAnarchyTimer() {
-	fmt.Println("No leader detected, embrace ANARCHY!")
+	kernelLog.Printf("No leader detected, embrace ANARCHY!")
 
 	if *k.state == ANARCHY {
 		// Need to stop timer
@@ -150,7 +185,7 @@ func (k *MasterKernel) resetAnarchyTimer() {
 }
 
 func (k *MasterKernel) chooseLeader() {
-	fmt.Println("Anarchy has ended. Choosing a new leader")
+	kernelLog.Printf("ANARCHY has ended. Choosing a new leader")
 	leader := k.aliveNodes[k.uuid.String()]
 	for _, master := range k.aliveNodes {
 		if master.uuid <= leader.uuid {
@@ -159,30 +194,14 @@ func (k *MasterKernel) chooseLeader() {
 	}
 
 	*k.leaderUuid = leader.uuid
-	fmt.Printf("We all hail the new leader: %v\n", leader.uuid)
+	kernelLog.Printf("We all hail the new leader: %v\n", leader.uuid)
 	if leader.uuid == k.uuid.String() {
-		fmt.Println("I am the leader")
+		kernelLog.Printf("I am the leader")
 		*k.state = LEADER
 	} else {
 		*k.state = NOT_LEADER
 	}
-	fmt.Printf("New leader state: %v\n", k.state.String())
-}
-
-func (k *MasterKernel) eventLoop() {
-	for {
-		select {
-		case data := <-k.keepAliveCh:
-			if new_master := k.trackMasterNode(data.uuid, data.addr); new_master {
-				k.resetAnarchyTimer()
-			}
-		case corpse := <-k.deadMasterCh:
-			k.killDeadMaster(corpse)
-			k.resetAnarchyTimer()
-		case <-k.anarchyTmr.C:
-			k.chooseLeader()
-		}
-	}
+	kernelLog.Printf("New leader state: %v\n", k.state.String())
 }
 
 func (k *MasterKernel) GetMasters() string {
@@ -200,4 +219,20 @@ func (k *MasterKernel) GetLeaderState() string {
 
 func (k *MasterKernel) GetLeaderId() string {
 	return *k.leaderUuid
+}
+
+func (k *MasterKernel) eventLoop() {
+	for {
+		select {
+		case data := <-k.keepAliveCh:
+			if new_master := k.trackMasterNode(data.uuid, data.addr); new_master {
+				k.resetAnarchyTimer()
+			}
+		case corpse := <-k.deadMasterCh:
+			k.killDeadMaster(corpse)
+			k.resetAnarchyTimer()
+		case <-k.anarchyTmr.C:
+			k.chooseLeader()
+		}
+	}
 }
