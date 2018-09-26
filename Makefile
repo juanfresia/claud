@@ -29,6 +29,7 @@ docker:
 
 clean:
 	rm -rf $(BIN_DIR)
+	rm *.log
 .PHONY: clean
 
 .DEFAULT: all
