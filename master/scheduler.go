@@ -3,12 +3,9 @@ package master
 import (
 	"bufio"
 	"fmt"
-	"log"
 	"net"
-	"strings"
 	"time"
-
-	"github.com/satori/go.uuid"
+	//"github.com/satori/go.uuid"
 )
 
 // ----------------------- Data type definitions ----------------------
@@ -18,28 +15,25 @@ const (
 	connDialTimeout = time.Second
 )
 
-type Scheduler struct {
-	uuid            uuid.UUID
+type scheduler struct {
 	masterAddresses map[string]string
-
-	schedLog *log.Logger
 }
 
 // ----------------------------- Functions ----------------------------
 
-func newScheduler(uuid uuid.UUID, kernelLog *log.Logger) Scheduler {
-	sch := &Scheduler{uuid: uuid, schedLog: kernelLog}
+func newScheduler() scheduler {
+	sch := &scheduler{}
 	sch.masterAddresses = make(map[string]string)
 
 	return *sch
 }
 
-func (sch *Scheduler) leaderSchHandler(conn net.Conn) {
+func (sch *scheduler) leaderSchHandler(conn net.Conn) {
 	for {
 		// Will listen for message to process ending in newline (\n)
 		message, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
-			sch.schedLog.Println("ERROR: Couldn't read from socket: ", err.Error())
+			masterLog.Error("Couldn't read from socket: " + err.Error())
 			conn.Close()
 			return
 		}
@@ -49,37 +43,37 @@ func (sch *Scheduler) leaderSchHandler(conn net.Conn) {
 	}
 }
 
-func (sch *Scheduler) leaderScheduler() {
+func (sch *scheduler) leaderScheduler() {
 	// Listen on all interfaces
 	ln, err := net.Listen("tcp", ":"+schedulerPort)
 	if err != nil {
-		sch.schedLog.Println("ERROR: Couldn't socket listen: ", err.Error())
+		masterLog.Error("Couldn't socket listen: " + err.Error())
 		return
 	}
 	// Accept connections on port
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			sch.schedLog.Println("ERROR: Couldn't socket accept: ", err.Error())
+			masterLog.Error("Couldn't socket accept: " + err.Error())
 			return
 		}
 		go sch.leaderSchHandler(conn)
 	}
 }
 
-func (sch *Scheduler) followerScheduler(leaderSchAddr string) {
+func (sch *scheduler) followerScheduler(leaderSchAddr string) {
 	conn, err := net.DialTimeout("tcp", leaderSchAddr, connDialTimeout)
 	if err != nil {
-		sch.schedLog.Println("ERROR: Couldn't connect to leader socket: ", err.Error())
+		masterLog.Error("Couldn't connect to leader socket: " + err.Error())
 		return
 	}
 	for {
-		// Send hello to leader Scheduler
+		// Send hello to leader scheduler
 		fmt.Fprintf(conn, "Hello leader\n")
 		// Listen for reply
 		message, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
-			sch.schedLog.Println("ERROR: Couldn't read from leader socket: ", err.Error())
+			masterLog.Error("Couldn't read from leader socket: " + err.Error())
 			conn.Close()
 			return
 		}
@@ -88,12 +82,10 @@ func (sch *Scheduler) followerScheduler(leaderSchAddr string) {
 	}
 }
 
-func (sch *Scheduler) OpenConnections(leaderData *MasterData) {
-	if leaderData.uuid == sch.uuid.String() {
+func (sch *scheduler) openConnections(leaderIP string, imLeader bool) {
+	if imLeader {
 		go sch.leaderScheduler()
 	} else {
-		leaderSchAddr := leaderData.addr.String()
-		leaderSchAddr = leaderSchAddr[:strings.Index(leaderSchAddr, ":")+1] + schedulerPort
-		go sch.followerScheduler(leaderSchAddr)
+		go sch.followerScheduler(leaderIP + ":" + schedulerPort)
 	}
 }
