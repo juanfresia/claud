@@ -1,11 +1,12 @@
 package master
 
 import (
-	"bufio"
+	"encoding/gob"
 	"fmt"
 	"net"
 	"time"
-	//"github.com/satori/go.uuid"
+
+	linuxproc "github.com/c9s/goprocinfo/linux"
 )
 
 // ----------------------- Data type definitions ----------------------
@@ -14,6 +15,11 @@ const (
 	schedulerPort   = "2002"
 	connDialTimeout = time.Second
 )
+
+type schMsg struct {
+	MemFree  uint64
+	MemTotal uint64
+}
 
 type scheduler struct {
 	masterAddresses map[string]string
@@ -28,18 +34,34 @@ func newScheduler() scheduler {
 	return *sch
 }
 
+func (sch *scheduler) readMemory() *schMsg {
+	meminfo, err := linuxproc.ReadMemInfo("/proc/meminfo")
+	if err != nil {
+		masterLog.Error("Couldn't read memory info: " + err.Error())
+	}
+	msg := &schMsg{MemFree: meminfo.MemFree, MemTotal: meminfo.MemTotal}
+	return msg
+}
+
 func (sch *scheduler) leaderSchHandler(conn net.Conn) {
+	enc := gob.NewEncoder(conn)
+	dec := gob.NewDecoder(conn)
 	for {
 		// Will listen for message to process ending in newline (\n)
-		message, err := bufio.NewReader(conn).ReadString('\n')
+		var mf schMsg
+		err := dec.Decode(&mf)
 		if err != nil {
 			masterLog.Error("Couldn't read from socket: " + err.Error())
-			conn.Close()
 			return
 		}
-		fmt.Printf("Message received from follower: %s", string(message))
+		fmt.Printf("Follower memory is: %v KB free (of %v KB)", mf.MemFree, mf.MemTotal)
 		// Reply the hello back
-		fmt.Fprintf(conn, "Hello there follower\n")
+		msg := "ACK\n"
+		err = enc.Encode(&msg)
+		if err != nil {
+			masterLog.Error("Couldn't write to socket: " + err.Error())
+			return
+		}
 	}
 }
 
@@ -68,16 +90,23 @@ func (sch *scheduler) followerScheduler(leaderSchAddr string) {
 		return
 	}
 	for {
+		enc := gob.NewEncoder(conn)
+		dec := gob.NewDecoder(conn)
+		mf := sch.readMemory()
 		// Send hello to leader scheduler
-		fmt.Fprintf(conn, "Hello leader\n")
-		// Listen for reply
-		message, err := bufio.NewReader(conn).ReadString('\n')
+		err = enc.Encode(mf)
 		if err != nil {
-			masterLog.Error("Couldn't read from leader socket: " + err.Error())
-			conn.Close()
+			masterLog.Error("Couldn't write to leader socket: " + err.Error())
 			return
 		}
-		fmt.Print("Message from leader scheduler: " + message)
+		// Listen for reply
+		var msg string
+		err = dec.Decode(&msg)
+		if err != nil {
+			masterLog.Error("Couldn't read from leader socket: " + err.Error())
+			return
+		}
+		fmt.Print("Message from leader scheduler: " + msg)
 		time.Sleep(time.Second * 8)
 	}
 }
