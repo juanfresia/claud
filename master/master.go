@@ -21,9 +21,9 @@ type MasterServer struct {
 
 // newMasterServer creates a new MasterServer with an already
 // initialized masterKernel.
-func newMasterServer() *MasterServer {
+func newMasterServer(mem uint64) *MasterServer {
 	m := &MasterServer{}
-	m.kernel = newMasterKernel()
+	m.kernel = newMasterKernel(mem)
 	return m
 }
 
@@ -55,12 +55,16 @@ func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	aliveMasters := m.kernel.getMasters()
+	masterResources := m.kernel.getMastersResources()
 	masterDataArray := make([]interface{}, len(aliveMasters))
 	i := 0
-	for uuid, ipPort := range aliveMasters {
-		masterData := make(map[string]string)
+	for _, uuid := range aliveMasters {
+		masterData := make(map[string]interface{})
 		masterData["UUID"] = uuid
-		masterData["address"] = ipPort
+		if resourceData, present := masterResources[uuid]; present {
+			masterData["free_memory"] = resourceData.MemFree
+			masterData["total_memory"] = resourceData.MemTotal
+		}
 		masterDataArray[i] = masterData
 		i += 1
 	}
@@ -76,9 +80,9 @@ func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 // --------------------------- Main function ---------------------------
 
 // LaunchMaster starts a master on the given IP and port.
-func LaunchMaster(masterIp, port string) {
+func LaunchMaster(masterIp, port string, mem uint64) {
 	myUuid = uuid.NewV4()
-	m := newMasterServer()
+	m := newMasterServer(mem)
 	server := mux.NewRouter()
 
 	server.HandleFunc("/", m.getMyStatus).Methods("GET")

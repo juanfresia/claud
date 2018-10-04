@@ -22,13 +22,13 @@ type masterKernel struct {
 
 // newMasterKernel creates a new masterKernel together with
 // its scheduler and mastersTracker.
-func newMasterKernel() masterKernel {
+func newMasterKernel(mem uint64) masterKernel {
 	k := &masterKernel{}
 
 	StartupMasterLog("./kernel-" + myUuid.String()[:8] + ".log")
 	k.newLeaderCh = make(chan string, 10)
 	k.mt = newMastersTracker(k.newLeaderCh)
-	k.sch = newScheduler()
+	k.sch = newScheduler(mem)
 
 	go k.eventLoop()
 
@@ -44,14 +44,15 @@ func (k *masterKernel) restartscheduler(leaderIp string) {
 		// Tricky
 		time.Sleep(learningTmr)
 	}
-	k.sch.openConnections(leaderIp, imLeader)
+	mastersAmount := int32(len(k.getMasters()))
+	k.sch.openConnections(leaderIp, imLeader, mastersAmount)
 }
 
 // ------------------ Functions for the masterServer -----------------
 
-// getMasters returns a map containing info of all the master
-// nodes alive, in the form {"uuid": "IP:PORT"}.
-func (k *masterKernel) getMasters() map[string]string {
+// getMasters returns a slice containing the UUID of all the
+// alive master nodes.
+func (k *masterKernel) getMasters() []string {
 	return k.mt.getMasters()
 }
 
@@ -65,6 +66,10 @@ func (k *masterKernel) getLeaderState() string {
 // if no leader has been chosen yet).
 func (k *masterKernel) getLeaderId() string {
 	return k.mt.getLeaderId()
+}
+
+func (k *masterKernel) getMastersResources() map[string]masterResourcesData {
+	return k.sch.getMastersResources()
 }
 
 // -------------------------- Main eventLoop -------------------------

@@ -189,12 +189,14 @@ func (mt *mastersTracker) chooseLeader() {
 	mt.newLeaderCh <- leaderIP
 }
 
-// getMasters returns a map containing info of all the master
-// nodes alive, in the form {"uuid": "IP:PORT"}.
-func (mt *mastersTracker) getMasters() map[string]string {
-	aliveMasters := make(map[string]string)
-	for uuid, md := range mt.aliveNodes {
-		aliveMasters[uuid] = md.addr.String()
+// getMasters returns a slice containing the UUID of all the
+// alive master nodes.
+func (mt *mastersTracker) getMasters() []string {
+	aliveMasters := make([]string, len(mt.aliveNodes))
+	i := 0
+	for uuid := range mt.aliveNodes {
+		aliveMasters[i] = uuid
+		i++
 	}
 	return aliveMasters
 }

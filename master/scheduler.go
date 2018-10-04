@@ -3,10 +3,10 @@ package master
 import (
 	"encoding/gob"
 	"fmt"
+	"github.com/satori/go.uuid"
 	"net"
+	"sync/atomic"
 	"time"
-
-	linuxproc "github.com/c9s/goprocinfo/linux"
 )
 
 // ----------------------- Data type definitions ----------------------
@@ -16,31 +16,28 @@ const (
 	connDialTimeout = time.Second
 )
 
-type schMsg struct {
-	MemFree  uint64
-	MemTotal uint64
+type masterResourcesData struct {
+	MasterUuid uuid.UUID
+	MemFree    uint64
+	MemTotal   uint64
 }
 
 type scheduler struct {
-	masterAddresses map[string]string
+	mastersAmount   int32
+	memTotal        uint64
+	masterResources map[string]masterResourcesData
 }
 
 // ----------------------------- Functions ----------------------------
 
-func newScheduler() scheduler {
-	sch := &scheduler{}
-	sch.masterAddresses = make(map[string]string)
+func newScheduler(mem uint64) scheduler {
+	sch := &scheduler{memTotal: mem}
+	sch.masterResources = make(map[string]masterResourcesData)
+	// Initialize own resources data
+	ownResourcesData := masterResourcesData{myUuid, mem, mem}
+	sch.masterResources[myUuid.String()] = ownResourcesData
 
 	return *sch
-}
-
-func (sch *scheduler) readMemory() *schMsg {
-	meminfo, err := linuxproc.ReadMemInfo("/proc/meminfo")
-	if err != nil {
-		masterLog.Error("Couldn't read memory info: " + err.Error())
-	}
-	msg := &schMsg{MemFree: meminfo.MemFree, MemTotal: meminfo.MemTotal}
-	return msg
 }
 
 func (sch *scheduler) leaderSchHandler(conn net.Conn) {
@@ -48,18 +45,19 @@ func (sch *scheduler) leaderSchHandler(conn net.Conn) {
 	dec := gob.NewDecoder(conn)
 	for {
 		// Will listen for message to process ending in newline (\n)
-		var mf schMsg
+		var mf masterResourcesData
 		err := dec.Decode(&mf)
 		if err != nil {
 			masterLog.Error("Couldn't read from socket: " + err.Error())
+			atomic.AddInt32(&sch.mastersAmount, -1)
 			return
 		}
-		fmt.Printf("Follower memory is: %v KB free (of %v KB)", mf.MemFree, mf.MemTotal)
-		// Reply the hello back
-		msg := "ACK\n"
-		err = enc.Encode(&msg)
+		sch.masterResources[mf.MasterUuid.String()] = mf
+		// Reply the memory data back
+		err = enc.Encode(&sch.masterResources)
 		if err != nil {
 			masterLog.Error("Couldn't write to socket: " + err.Error())
+			atomic.AddInt32(&sch.mastersAmount, -1)
 			return
 		}
 	}
@@ -89,32 +87,38 @@ func (sch *scheduler) followerScheduler(leaderSchAddr string) {
 		masterLog.Error("Couldn't connect to leader socket: " + err.Error())
 		return
 	}
+	enc := gob.NewEncoder(conn)
+	dec := gob.NewDecoder(conn)
 	for {
-		enc := gob.NewEncoder(conn)
-		dec := gob.NewDecoder(conn)
-		mf := sch.readMemory()
-		// Send hello to leader scheduler
+		mf := &masterResourcesData{MasterUuid: myUuid, MemFree: sch.memTotal, MemTotal: sch.memTotal}
+		// Send memory to leader scheduler
 		err = enc.Encode(mf)
 		if err != nil {
 			masterLog.Error("Couldn't write to leader socket: " + err.Error())
 			return
 		}
 		// Listen for reply
-		var msg string
-		err = dec.Decode(&msg)
+		err = dec.Decode(&sch.masterResources)
 		if err != nil {
 			masterLog.Error("Couldn't read from leader socket: " + err.Error())
 			return
 		}
-		fmt.Print("Message from leader scheduler: " + msg)
-		time.Sleep(time.Second * 8)
+		fmt.Print("Received data from leader scheduler\n")
+
+		time.Sleep(time.Second * 18)
 	}
 }
 
-func (sch *scheduler) openConnections(leaderIP string, imLeader bool) {
+func (sch *scheduler) openConnections(leaderIP string, imLeader bool, mastersAmount int32) {
+	// TODO: Close all active connections via channels
+	atomic.StoreInt32(&sch.mastersAmount, mastersAmount)
 	if imLeader {
 		go sch.leaderScheduler()
 	} else {
 		go sch.followerScheduler(leaderIP + ":" + schedulerPort)
 	}
+}
+
+func (sch *scheduler) getMastersResources() map[string]masterResourcesData {
+	return sch.masterResources
 }
