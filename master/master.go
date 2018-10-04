@@ -3,9 +3,10 @@
 package master
 
 import (
-	"fmt"
+	"encoding/json"
 	"net/http"
 
+	"github.com/gorilla/mux"
 	"github.com/satori/go.uuid"
 )
 
@@ -26,26 +27,50 @@ func newMasterServer() *MasterServer {
 	return m
 }
 
-// myStatus provides info on this master's status.
-func (m *MasterServer) myStatus(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, I am master %v\n", myUuid.String())
+// getMyStatus provides info on this master's status.
+func (m *MasterServer) getMyStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	myStatusData := make(map[string]string)
+	myStatusData["my_UUID"] = myUuid.String()
+	w.WriteHeader(http.StatusOK)
+	response, _ := json.Marshal(myStatusData)
+	w.Write(response)
 }
 
-// leaderStatus shows how the master leader election is going and
+// getLeaderStatus shows how the master leader election is going and
 // which master is the real leader.
-func (m *MasterServer) leaderStatus(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "My leader status: %v\n", m.kernel.getLeaderState())
-	fmt.Fprintf(w, "Leader UUID is: %s\n", m.kernel.getLeaderId())
+func (m *MasterServer) getLeaderStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	leaderStatusData := make(map[string]string)
+	leaderStatusData["leader_status"] = m.kernel.getLeaderState()
+	leaderStatusData["leader_UUID"] = m.kernel.getLeaderId()
+	w.WriteHeader(http.StatusOK)
+	response, _ := json.Marshal(leaderStatusData)
+	w.Write(response)
 }
 
-// aliveMasters prints a nice list of all masters in the cluster.
-func (m *MasterServer) aliveMasters(w http.ResponseWriter, r *http.Request) {
-	msg := "ALIVE MASTER NODES\n"
+// getAliveMasters prints a nice list of all masters in the cluster.
+func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
 	aliveMasters := m.kernel.getMasters()
+	masterDataArray := make([]interface{}, len(aliveMasters))
+	i := 0
 	for uuid, ipPort := range aliveMasters {
-		msg += ("UUID: " + uuid + " IP:PORT: " + ipPort + "\n")
+		masterData := make(map[string]string)
+		masterData["UUID"] = uuid
+		masterData["address"] = ipPort
+		masterDataArray[i] = masterData
+		i += 1
 	}
-	fmt.Fprintf(w, msg)
+
+	aliveMastersResponse := make(map[string]interface{})
+	aliveMastersResponse["alive_masters"] = masterDataArray
+
+	response, _ := json.Marshal(aliveMastersResponse)
+	w.WriteHeader(http.StatusOK)
+	w.Write(response)
 }
 
 // --------------------------- Main function ---------------------------
@@ -54,9 +79,10 @@ func (m *MasterServer) aliveMasters(w http.ResponseWriter, r *http.Request) {
 func LaunchMaster(masterIp, port string) {
 	myUuid = uuid.NewV4()
 	m := newMasterServer()
+	server := mux.NewRouter()
 
-	http.HandleFunc("/", m.myStatus)
-	http.HandleFunc("/masters", m.aliveMasters)
-	http.HandleFunc("/leader", m.leaderStatus)
-	http.ListenAndServe(masterIp+":"+port, nil)
+	server.HandleFunc("/", m.getMyStatus).Methods("GET")
+	server.HandleFunc("/masters", m.getAliveMasters).Methods("GET")
+	server.HandleFunc("/leader", m.getLeaderStatus).Methods("GET")
+	http.ListenAndServe(masterIp+":"+port, server)
 }
