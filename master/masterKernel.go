@@ -72,6 +72,11 @@ func (k *masterKernel) getMastersResources() map[string]masterResourcesData {
 	return k.sch.getMastersResources()
 }
 
+// TODO: Launch a job, delegating on the scheduler.launchJob()
+func (k *masterKernel) launchJob() {
+
+}
+
 // -------------------------- Main eventLoop -------------------------
 
 // eventLoop for the masterKernel to handle all other modules events.

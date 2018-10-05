@@ -40,8 +40,9 @@ type scheduler struct {
 	mastersAmount   int32
 	memTotal        uint64
 	masterResources map[string]masterResourcesData
-	leaderCh        []chan msgScheduler
-	followerCh      chan msgScheduler
+	// TODO: Add a "jobs table" (job id vs master uuid)
+	leaderCh   []chan msgScheduler
+	followerCh chan msgScheduler
 }
 
 // ----------------------------- Functions ----------------------------
@@ -85,6 +86,8 @@ func (sch *scheduler) leaderSchHandler(conn net.Conn, connId int32) {
 				atomic.AddInt32(&sch.mastersAmount, -1)
 				return
 			}
+		case SCH_JOB:
+			// TODO: Forward the msgScheduler to the follower
 		default:
 			// Should never happen
 			masterLog.Error("Received wrong sch action!")
@@ -162,6 +165,10 @@ func (sch *scheduler) followerScheduler(leaderSchAddr string) {
 				sch.masterResources[uuid] = data
 			}
 			fmt.Print("Master resources updated with info from leader\n")
+		case SCH_JOB:
+			// TODO: If the job needs to be launched on my machine (check uuids),
+			// then REALLY launch the job. Update the masterResources table and
+			// the "jobs table".
 		default:
 			// Should never happen
 			masterLog.Error("Received wrong sch action!")
@@ -178,6 +185,13 @@ func (sch *scheduler) openConnections(leaderIP string, imLeader bool, mastersAmo
 	} else {
 		go sch.followerScheduler(leaderIP + ":" + schedulerPort)
 	}
+}
+
+// TODO: Select a node with enough resources for launching a job, make a
+// msgScheduler with Action: SCH_JOB and forward it to all connections via
+// the sch.leaderCh
+func (sch *scheduler) launchJob() {
+
 }
 
 func (sch *scheduler) getMastersResources() map[string]masterResourcesData {

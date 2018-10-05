@@ -77,6 +77,19 @@ func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	w.Write(response)
 }
 
+// TODO: Somehow fetch the running jobs list and return it json formatted
+func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
+
+}
+
+// TODO: Launch a new job based on the request body
+func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
+	// if m.kernel.getLeaderId() == myUuid
+	//   m.kernel.launchJob()
+	// else
+	//   somehow forward it to leader
+}
+
 // --------------------------- Main function ---------------------------
 
 // LaunchMaster starts a master on the given IP and port.
@@ -88,5 +101,7 @@ func LaunchMaster(masterIp, port string, mem uint64) {
 	server.HandleFunc("/", m.getMyStatus).Methods("GET")
 	server.HandleFunc("/masters", m.getAliveMasters).Methods("GET")
 	server.HandleFunc("/leader", m.getLeaderStatus).Methods("GET")
+	server.HandleFunc("/jobs", m.getJobsList).Methods("GET")
+	server.HandleFunc("/jobs", m.launchNewJob).Methods("POST")
 	http.ListenAndServe(masterIp+":"+port, server)
 }
