@@ -3,105 +3,64 @@
 package master
 
 import (
-	"encoding/json"
-	"net/http"
-
-	"github.com/gorilla/mux"
 	"github.com/satori/go.uuid"
 )
 
+// The UUID identifier of this master node
 var myUuid uuid.UUID
 
-// --------------------------- Master struct ---------------------------
+const (
+	maxMasterAmount = 100
+)
 
-// MasterServer provides some nice HTTP API for the claud users.
-type MasterServer struct {
-	kernel masterKernel
-}
+// masterState keeps track of the leader election state.
+type masterState int
 
-// newMasterServer creates a new MasterServer with an already
-// initialized masterKernel.
-func newMasterServer(mem uint64) *MasterServer {
-	m := &MasterServer{}
-	m.kernel = newMasterKernel(mem)
-	return m
-}
+const (
+	LEADER masterState = iota
+	NOT_LEADER
+	ANARCHY
+)
 
-// getMyStatus provides info on this master's status.
-func (m *MasterServer) getMyStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	myStatusData := make(map[string]string)
-	myStatusData["my_UUID"] = myUuid.String()
-	w.WriteHeader(http.StatusOK)
-	response, _ := json.Marshal(myStatusData)
-	w.Write(response)
-}
-
-// getLeaderStatus shows how the master leader election is going and
-// which master is the real leader.
-func (m *MasterServer) getLeaderStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	leaderStatusData := make(map[string]string)
-	leaderStatusData["leader_status"] = m.kernel.getLeaderState()
-	leaderStatusData["leader_UUID"] = m.kernel.getLeaderId()
-	w.WriteHeader(http.StatusOK)
-	response, _ := json.Marshal(leaderStatusData)
-	w.Write(response)
-}
-
-// getAliveMasters prints a nice list of all masters in the cluster.
-func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	aliveMasters := m.kernel.getMasters()
-	masterResources := m.kernel.getMastersResources()
-	masterDataArray := make([]interface{}, len(aliveMasters))
-	i := 0
-	for _, uuid := range aliveMasters {
-		masterData := make(map[string]interface{})
-		masterData["UUID"] = uuid
-		if resourceData, present := masterResources[uuid]; present {
-			masterData["free_memory"] = resourceData.MemFree
-			masterData["total_memory"] = resourceData.MemTotal
-		}
-		masterDataArray[i] = masterData
-		i += 1
+func (ms masterState) String() string {
+	strMap := [...]string{
+		"LEADER",
+		"NOT LEADER",
+		"IN ANARCHY",
 	}
-
-	aliveMastersResponse := make(map[string]interface{})
-	aliveMastersResponse["alive_masters"] = masterDataArray
-
-	response, _ := json.Marshal(aliveMastersResponse)
-	w.WriteHeader(http.StatusOK)
-	w.Write(response)
+	return strMap[ms]
 }
 
-// TODO: Somehow fetch the running jobs list and return it json formatted
-func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
-
+// masterResourcesData represents the resources of a master node
+type masterResourcesData struct {
+	MasterUuid uuid.UUID
+	MemFree    uint64
+	MemTotal   uint64
 }
 
-// TODO: Launch a new job based on the request body
-func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
-	// if m.kernel.getLeaderId() == myUuid
-	//   m.kernel.launchJob()
-	// else
-	//   somehow forward it to leader
+// jobState tracks the state of a running job.
+type jobState int
+
+const (
+	JOB_RUNNING jobState = iota
+	JOB_FINISHED
+	JOB_FAILED
+)
+
+func (js jobState) String() string {
+	strMap := [...]string{
+		"RUNNING",
+		"FINISHED",
+		"FAILED",
+	}
+	return strMap[js]
 }
 
-// --------------------------- Main function ---------------------------
-
-// LaunchMaster starts a master on the given IP and port.
-func LaunchMaster(masterIp, port string, mem uint64) {
-	myUuid = uuid.NewV4()
-	m := newMasterServer(mem)
-	server := mux.NewRouter()
-
-	server.HandleFunc("/", m.getMyStatus).Methods("GET")
-	server.HandleFunc("/masters", m.getAliveMasters).Methods("GET")
-	server.HandleFunc("/leader", m.getLeaderStatus).Methods("GET")
-	server.HandleFunc("/jobs", m.getJobsList).Methods("GET")
-	server.HandleFunc("/jobs", m.launchNewJob).Methods("POST")
-	http.ListenAndServe(masterIp+":"+port, server)
+// jobData represents all the info of a running/to run job
+type jobData struct {
+	JobName       string
+	MemUsage      uint64
+	AsignedMaster string
+	JobId         string
+	JobStatus     jobState
 }

@@ -16,24 +16,6 @@ const (
 	learningTmr     = 20 * time.Second
 )
 
-// masterState keeps track of the leader election state.
-type masterState int
-
-const (
-	LEADER masterState = iota
-	NOT_LEADER
-	ANARCHY
-)
-
-func (ms masterState) String() string {
-	strMap := [...]string{
-		"LEADER",
-		"NOT LEADER",
-		"IN ANARCHY",
-	}
-	return strMap[ms]
-}
-
 // masterData stores the UUID, UDP address and defunct timer of
 // a master node.
 type masterData struct {
@@ -67,9 +49,8 @@ func newMastersTracker(newLeaderCh chan<- string) mastersTracker {
 	*mt.leaderUuid = "NO LEADER"
 	mt.aliveNodes = make(map[string]masterData)
 
-	// TODO: define the buffer length as "max master amount"
-	mt.keepAliveCh = make(chan masterData, 10)
-	mt.deadMasterCh = make(chan string, 10)
+	mt.keepAliveCh = make(chan masterData, maxMasterAmount)
+	mt.deadMasterCh = make(chan string, maxMasterAmount)
 
 	mt.anarchyTmr = time.NewTimer(learningTmr)
 
