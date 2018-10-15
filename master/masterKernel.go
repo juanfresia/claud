@@ -77,6 +77,11 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 	return k.sch.launchJob(jobName, memUsage, imageName)
 }
 
+// stopJob attempts to stop a job, deleting the container
+func (k *masterKernel) stopJob(jobID string) string {
+	return k.sch.stopJob(jobID)
+}
+
 // getJobsTable retrieves all jobs data
 func (k *masterKernel) getJobsList() map[string]jobData {
 	return k.sch.getJobsTable()

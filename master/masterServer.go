@@ -85,7 +85,9 @@ func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 	i := 0
 	for _, data := range jobsList {
 		thisJobData := make(map[string]interface{})
+		thisJobData["job_full_name"] = data.JobName + "-" + data.JobId
 		thisJobData["job_id"] = data.JobId
+		thisJobData["image"] = data.ImageName
 		thisJobData["asigned_master"] = data.AsignedMaster
 		thisJobData["status"] = data.JobStatus.String()
 
@@ -103,7 +105,29 @@ func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 
 // TODO: Somehow kill a running job
 func (m *MasterServer) stopJob(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	jobID := mux.Vars(r)["id"]
 
+	jobsList := m.kernel.getJobsList()
+
+	jobToKill, exists := jobsList[jobID]
+	if !exists {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("{\"message\": \"Job " + jobID + " does not exist\"}"))
+		return
+	}
+
+	jobHostID := jobToKill.AsignedMaster
+	if jobHostID != myUuid.String() {
+		// TODO: Forward to master node where job is running
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte("{\"message\": \"Not running in this host\"}"))
+		return
+	}
+	// TODO: add error checking
+	jobID = m.kernel.stopJob(jobID)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("{\"job_id\": \"" + jobID + "\"}"))
 }
 
 // launchNewJob launches a new job based on the request body received.
@@ -157,6 +181,6 @@ func LaunchMaster(masterIp, port string, mem uint64) {
 	server.HandleFunc("/leader", m.getLeaderStatus).Methods("GET")
 	server.HandleFunc("/jobs", m.getJobsList).Methods("GET")
 	server.HandleFunc("/jobs", m.launchNewJob).Methods("POST")
-	server.HandleFunc("/jobs", m.stopJob).Methods("DELETE")
+	server.HandleFunc("/jobs/{id}", m.stopJob).Methods("DELETE")
 	http.ListenAndServe(masterIp+":"+port, server)
 }

@@ -101,6 +101,23 @@ func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 
 }
 
+// stopJob attempts to stop the container running the job
+func (sch *scheduler) stopJob(jobID string) string {
+	job := sch.jobsTable[jobID]
+	jobFullName := job.JobName + "-" + job.JobId
+	fmt.Printf("Stopping job on this node: %v.\n", jobFullName)
+
+	cmd := "sudo docker stop " + jobFullName
+	fmt.Printf("%v\n", cmd)
+	jobCmd := exec.Command("/bin/bash", "-c", cmd)
+	err := jobCmd.Run()
+	if err != nil {
+		masterLog.Error("Couldn't successfully stop job " + jobFullName + ":" + err.Error())
+		return ""
+	}
+	return jobID
+}
+
 // launchJob selects a node with enough resources for launching the job,
 // and forwards a msgScheduler with Action: SCH_JOB to all connections via
 // the sch.leaderCh. It returns the JobId of the created job.
