@@ -1,2 +1,0 @@
-#!/bin/bash
-curl $1 -X $2 -H "Content-Type: application/json" -d "$3" | python -m json.tool
