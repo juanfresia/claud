@@ -111,8 +111,9 @@ func (m *MasterServer) stopJob(w http.ResponseWriter, r *http.Request) {
 func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var newJob struct {
-		Mem  uint64
-		Name string
+		Mem   uint64
+		Name  string
+		Image string
 	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -136,7 +137,8 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("{\"message\": \"Not the leader\"}"))
 		return
 	}
-	jobId := m.kernel.launchJob(newJob.Name, newJob.Mem)
+	// TODO: refactor this to pass only one job type element
+	jobId := m.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("{\"job_id\": \"" + jobId + "\"}"))

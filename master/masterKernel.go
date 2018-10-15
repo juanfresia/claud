@@ -73,8 +73,8 @@ func (k *masterKernel) getMastersResources() map[string]masterResourcesData {
 }
 
 // launchJob launches a job, delegating on the scheduler.launchJob()
-func (k *masterKernel) launchJob(jobName string, memUsage uint64) string {
-	return k.sch.launchJob(jobName, memUsage)
+func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName string) string {
+	return k.sch.launchJob(jobName, memUsage, imageName)
 }
 
 // getJobsTable retrieves all jobs data

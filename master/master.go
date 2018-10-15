@@ -59,6 +59,7 @@ func (js jobState) String() string {
 // jobData represents all the info of a running/to run job
 type jobData struct {
 	JobName       string
+	ImageName     string
 	MemUsage      uint64
 	AsignedMaster string
 	JobId         string

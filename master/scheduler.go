@@ -6,6 +6,7 @@ import (
 	"github.com/satori/go.uuid"
 	"net"
 	"os/exec"
+	"strconv"
 	"sync/atomic"
 	"time"
 )
@@ -37,9 +38,9 @@ type scheduler struct {
 	memTotal        uint64
 	masterResources map[string]masterResourcesData
 	// TODO: Erase the finished jobs from the table after a while?
-	jobsTable       map[string]jobData
-	leaderCh        []chan msgScheduler
-	followerCh      chan msgScheduler
+	jobsTable  map[string]jobData
+	leaderCh   []chan msgScheduler
+	followerCh chan msgScheduler
 }
 
 // ----------------------------- Functions ----------------------------
@@ -72,11 +73,12 @@ func (sch *scheduler) openConnections(leaderIP string, imLeader bool, mastersAmo
 	}
 }
 
-// TODO: REALLY LAUNCH THIS WITH DOCKER!! 
 func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 	fmt.Printf("Launching job on this node: %v.\n", job.JobName)
-	cmd := "go run " + job.JobName + ".go > job-" + job.JobId + ".log"
-	jobCmd := exec.Command("bash", "-c", cmd)
+	jobFullName := job.JobName + "-" + job.JobId
+	cmd := "sudo docker run --net=host --rm -m " + strconv.FormatUint(job.MemUsage, 10) + "m --name " + jobFullName + " " + job.ImageName
+	fmt.Printf("%v\n", cmd)
+	jobCmd := exec.Command("/bin/bash", "-c", cmd)
 	err := jobCmd.Run()
 	if err != nil {
 		masterLog.Error("Couldn't successfully execute " + job.JobName + ":" + err.Error())
@@ -102,7 +104,7 @@ func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 // launchJob selects a node with enough resources for launching the job,
 // and forwards a msgScheduler with Action: SCH_JOB to all connections via
 // the sch.leaderCh. It returns the JobId of the created job.
-func (sch *scheduler) launchJob(jobName string, memUsage uint64) string {
+func (sch *scheduler) launchJob(jobName string, memUsage uint64, imageName string) string {
 	assignedMaster := ""
 	for uuid, data := range sch.masterResources {
 		if data.MemFree >= memUsage {
@@ -116,6 +118,7 @@ func (sch *scheduler) launchJob(jobName string, memUsage uint64) string {
 
 	fmt.Printf("Found someone to launch the job: %v\n", assignedMaster)
 	job := jobData{JobName: jobName, MemUsage: memUsage, AsignedMaster: assignedMaster}
+	job.ImageName = imageName
 	job.JobId = uuid.NewV4().String()
 	job.JobStatus = JOB_RUNNING
 	for i := 0; int32(i) < (atomic.LoadInt32(sch.mastersAmount) - 1); i++ {
