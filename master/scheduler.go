@@ -74,7 +74,7 @@ func (sch *scheduler) openConnections(leaderIP string, imLeader bool, mastersAmo
 }
 
 func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
-	fmt.Printf("Launching job on this node: %v.\n", job.JobName)
+	masterLog.Info("Launching job on this node: " + job.JobName)
 	jobFullName := job.JobName + "-" + job.JobId
 	cmd := "sudo docker run --net=host --rm -m " + strconv.FormatUint(job.MemUsage, 10) + "m --name " + jobFullName + " " + job.ImageName
 	fmt.Printf("%v\n", cmd)
@@ -89,7 +89,7 @@ func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 
 	// If this was the leader, tell the followers the job has finished
 	if imLeader {
-		fmt.Printf("Job finished on the leader!!\n")
+		masterLog.Info("Job finished on the leader!!")
 		for i := 0; int32(i) < (atomic.LoadInt32(sch.mastersAmount) - 1); i++ {
 			sch.leaderCh[i] <- msgScheduler{Action: SCH_JOB_END, Payload: *job}
 		}
@@ -105,7 +105,7 @@ func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 func (sch *scheduler) stopJob(jobID string) string {
 	job := sch.jobsTable[jobID]
 	jobFullName := job.JobName + "-" + job.JobId
-	fmt.Printf("Stopping job on this node: %v.\n", jobFullName)
+	masterLog.Info("Stopping job on this node: " + jobFullName)
 
 	cmd := "sudo docker stop " + jobFullName
 	fmt.Printf("%v\n", cmd)
@@ -133,7 +133,7 @@ func (sch *scheduler) launchJob(jobName string, memUsage uint64, imageName strin
 		return "Error"
 	}
 
-	fmt.Printf("Found someone to launch the job: %v\n", assignedMaster)
+	masterLog.Info("Ordering " + assignedMaster + " to launch a new job")
 	job := jobData{JobName: jobName, MemUsage: memUsage, AsignedMaster: assignedMaster}
 	job.ImageName = imageName
 	job.JobId = uuid.NewV4().String()
@@ -186,7 +186,7 @@ func (sch *scheduler) leaderSchSender(enc *gob.Encoder, connId int32) {
 		switch msg.Action {
 		case SCH_RDY:
 			// Send resources updates to followers
-			fmt.Print("Have to send resources updates to followers\n")
+			fmt.Print("Sending master resources to followers\n")
 			// Send all master resources to followers
 			msgWithMemory := msgScheduler{Action: SCH_RES, Payload: sch.masterResources}
 			err := enc.Encode(&msgWithMemory)
@@ -237,7 +237,7 @@ func (sch *scheduler) leaderSchReceiver(dec *gob.Decoder, connId int32) {
 			for i := 0; int32(i) < (atomic.LoadInt32(sch.mastersAmount) - 1); i++ {
 				sch.leaderCh[i] <- msgScheduler{Action: SCH_JOB_END, Payload: job}
 			}
-			fmt.Printf("Job finished on follower with status: %v\n", job.JobStatus.String())
+			masterLog.Info("Job finished on this master with status: " + job.JobStatus.String())
 			assignedData := sch.masterResources[job.AsignedMaster]
 			assignedData.MemFree += job.MemUsage
 			sch.masterResources[job.AsignedMaster] = assignedData
@@ -327,7 +327,7 @@ func (sch *scheduler) followerScheduler(leaderSchAddr string) {
 				masterLog.Error("Received something strange as job data")
 				continue
 			}
-			fmt.Printf("Received new job!\n")
+			masterLog.Info("Received new job data from leader!\n")
 			assignedData := sch.masterResources[job.AsignedMaster]
 			assignedData.MemFree -= job.MemUsage
 			sch.masterResources[job.AsignedMaster] = assignedData
@@ -355,7 +355,7 @@ func (sch *scheduler) followerScheduler(leaderSchAddr string) {
 func (sch *scheduler) followerJobSpawner(enc *gob.Encoder, job jobData) {
 	msg := msgScheduler{Action: SCH_JOB_END}
 	sch.spawnJob(&job, false)
-	fmt.Printf("Job finished on this follower!\n")
+	masterLog.Info("Job finished on this follower master!")
 	msg.Payload = job
 	err := enc.Encode(&msg)
 	if err != nil {
