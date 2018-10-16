@@ -76,7 +76,7 @@ func (sch *scheduler) openConnections(leaderIP string, imLeader bool, mastersAmo
 func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 	masterLog.Info("Launching job on this node: " + job.JobName)
 	jobFullName := job.JobName + "-" + job.JobId
-	cmd := "sudo docker run --net=host --rm -m " + strconv.FormatUint(job.MemUsage, 10) + "m --name " + jobFullName + " " + job.ImageName
+	cmd := "sudo docker run --rm -m " + strconv.FormatUint(job.MemUsage, 10) + "m --name " + jobFullName + " " + job.ImageName
 	fmt.Printf("%v\n", cmd)
 	jobCmd := exec.Command("/bin/bash", "-c", cmd)
 	err := jobCmd.Run()
