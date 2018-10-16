@@ -1,43 +1,67 @@
+// Package master keeps together all the necessary stuff to launch
+// a master node of claud.
 package master
 
 import (
-	"fmt"
-	"net/http"
+	"github.com/satori/go.uuid"
 )
 
-// --------------------------- Master struct ---------------------------
+// The UUID identifier of this master node
+var myUuid uuid.UUID
 
-type MasterServer struct {
-	kernel MasterKernel
+const (
+	maxMasterAmount = 100
+)
+
+// masterState keeps track of the leader election state.
+type masterState int
+
+const (
+	LEADER masterState = iota
+	NOT_LEADER
+	ANARCHY
+)
+
+func (ms masterState) String() string {
+	strMap := [...]string{
+		"LEADER",
+		"NOT LEADER",
+		"IN ANARCHY",
+	}
+	return strMap[ms]
 }
 
-func newMasterServer() *MasterServer {
-	m := &MasterServer{}
-	m.kernel = newMasterKernel()
-	return m
+// masterResourcesData represents the resources of a master node
+type masterResourcesData struct {
+	MasterUuid uuid.UUID
+	MemFree    uint64
+	MemTotal   uint64
 }
 
-func (m *MasterServer) statusHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Hi there, I am master %v\n", m.kernel.uuid)
+// jobState tracks the state of a running job.
+type jobState int
+
+const (
+	JOB_RUNNING jobState = iota
+	JOB_FINISHED
+	JOB_FAILED
+)
+
+func (js jobState) String() string {
+	strMap := [...]string{
+		"RUNNING",
+		"FINISHED",
+		"FAILED",
+	}
+	return strMap[js]
 }
 
-func (m *MasterServer) leaderStatus(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "My leader status: %v\n", m.kernel.GetLeaderState())
-	fmt.Fprintf(w, "Leader UUID is: %s\n", m.kernel.GetLeaderId())
-}
-
-func (m *MasterServer) aliveMasters(w http.ResponseWriter, r *http.Request) {
-	msg := m.kernel.GetMasters()
-	fmt.Fprintf(w, msg)
-}
-
-// --------------------------- Main function ---------------------------
-
-func LaunchMaster(masterIp, port string) {
-	m := newMasterServer()
-
-	http.HandleFunc("/", m.statusHandler)
-	http.HandleFunc("/masters", m.aliveMasters)
-	http.HandleFunc("/leader", m.leaderStatus)
-	http.ListenAndServe(masterIp+":"+port, nil)
+// jobData represents all the info of a running/to run job
+type jobData struct {
+	JobName       string
+	ImageName     string
+	MemUsage      uint64
+	AsignedMaster string
+	JobId         string
+	JobStatus     jobState
 }

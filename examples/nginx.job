@@ -1,0 +1,5 @@
+{
+  "mem": 300,
+  "name": "myFirstJob",
+  "image": "nginx"
+}
