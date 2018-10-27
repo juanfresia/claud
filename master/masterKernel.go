@@ -12,7 +12,7 @@ import (
 // modules interact with it.
 type masterKernel struct {
 	sch         scheduler
-	mt          mastersTracker
+	mt          tracker
 	newLeaderCh chan string
 }
 
@@ -21,13 +21,13 @@ type masterKernel struct {
 // -------------------------------------------------------------------
 
 // newMasterKernel creates a new masterKernel together with
-// its scheduler and mastersTracker.
+// its scheduler and tracker.
 func newMasterKernel(mem uint64) masterKernel {
 	k := &masterKernel{}
 
 	StartupMasterLog("./kernel-" + myUuid.String()[:8] + ".log")
 	k.newLeaderCh = make(chan string, 10)
-	k.mt = newMastersTracker(k.newLeaderCh)
+	k.mt = newtracker(k.newLeaderCh)
 	k.sch = newScheduler(mem)
 
 	go k.eventLoop()

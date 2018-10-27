@@ -16,6 +16,24 @@ const (
 	learningTmr     = 20 * time.Second
 )
 
+// masterState keeps track of the leader election state.
+type masterState int
+
+const (
+	LEADER masterState = iota
+	NOT_LEADER
+	ANARCHY
+)
+
+func (ms masterState) String() string {
+	strMap := [...]string{
+		"LEADER",
+		"NOT LEADER",
+		"IN ANARCHY",
+	}
+	return strMap[ms]
+}
+
 // masterData stores the UUID, UDP address and defunct timer of
 // a master node.
 type masterData struct {
@@ -24,9 +42,9 @@ type masterData struct {
 	timer *time.Timer
 }
 
-// mastersTracker goal is to keep a table of alive masters nodes for
+// tracker goal is to keep a table of alive masters nodes for
 // choosing a leader. It reads and writes the UDP multicastAddr.
-type mastersTracker struct {
+type tracker struct {
 	aliveNodes map[string]masterData
 	state      *masterState
 	leaderUuid *string
@@ -39,10 +57,10 @@ type mastersTracker struct {
 
 // ----------------------------- Functions ----------------------------
 
-// newMastersTracker creates m mastersTracker and launches goroutines
+// newtracker creates m tracker and launches goroutines
 // for listening and writing the UDP multicast address.
-func newMastersTracker(newLeaderCh chan<- string) mastersTracker {
-	mt := &mastersTracker{newLeaderCh: newLeaderCh}
+func newtracker(newLeaderCh chan<- string) tracker {
+	mt := &tracker{newLeaderCh: newLeaderCh}
 	mt.state = new(masterState)
 	mt.leaderUuid = new(string)
 	*mt.state = ANARCHY
@@ -62,7 +80,7 @@ func newMastersTracker(newLeaderCh chan<- string) mastersTracker {
 
 // keepAliveSender forwards a keep alive message into the UDP
 // multicast address every keepAliveTmr seconds.
-func (mt *mastersTracker) keepAliveSender(multicastAddr string) {
+func (mt *tracker) keepAliveSender(multicastAddr string) {
 	addr, err := net.ResolveUDPAddr("udp", multicastAddr)
 	if err != nil {
 		masterLog.Error("UDP socket creation failed: " + err.Error())
@@ -78,8 +96,8 @@ func (mt *mastersTracker) keepAliveSender(multicastAddr string) {
 
 // listenMulticastUDP keeps track of the keep alive messages received
 // on the multicast UDP address. It forwards the master UUID read into
-// the mastersTracker main thread.
-func (mt *mastersTracker) listenMulticastUDP(multicastAddr string) {
+// the tracker main thread.
+func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 	addr, err := net.ResolveUDPAddr("udp", multicastAddr)
 	if err != nil {
 		masterLog.Error("UDP socket creation failed: " + err.Error())
@@ -102,8 +120,8 @@ func (mt *mastersTracker) listenMulticastUDP(multicastAddr string) {
 // trackMasterNode refreshes some master's entry in the alive master
 // nodes table, launching a defunct timer every time. Returns true if
 // a new master has appeared (meaning a new leader election should
-// take place on the mastersTrackers of all master nodes).
-func (mt *mastersTracker) trackMasterNode(masterUuid string, addr *net.UDPAddr) bool {
+// take place on the trackers of all master nodes).
+func (mt *tracker) trackMasterNode(masterUuid string, addr *net.UDPAddr) bool {
 	newMaster := false
 	_, present := mt.aliveNodes[masterUuid]
 	if present {
@@ -123,15 +141,15 @@ func (mt *mastersTracker) trackMasterNode(masterUuid string, addr *net.UDPAddr) 
 }
 
 // killDeadMaster erases a master from the alive master nodes table.
-func (mt *mastersTracker) killDeadMaster(masterUuid string) {
+func (mt *tracker) killDeadMaster(masterUuid string) {
 	masterLog.Info("WARNING: Master " + masterUuid + " has died!")
 	delete(mt.aliveNodes, masterUuid)
 }
 
-// resetAnarchyTimer restarts the anarchyTmr of the mastersTracker.
-// This function should only be called in the main mastersTracker
+// resetAnarchyTimer restarts the anarchyTmr of the tracker.
+// This function should only be called in the main tracker
 // main thread to prevent race conditions.
-func (mt *mastersTracker) resetAnarchyTimer() {
+func (mt *tracker) resetAnarchyTimer() {
 	masterLog.Info("No leader detected, embrace ANARCHY!")
 	if *mt.state == ANARCHY {
 		if !mt.anarchyTmr.Stop() {
@@ -147,7 +165,7 @@ func (mt *mastersTracker) resetAnarchyTimer() {
 // the table and makes it leader. It also forwards the identity
 // of such new leader into the channel that communicates with
 // the masterKernel.
-func (mt *mastersTracker) chooseLeader() {
+func (mt *tracker) chooseLeader() {
 	masterLog.Info("ANARCHY has ended. Choosing a new leader")
 	leader := mt.aliveNodes[myUuid.String()]
 	for _, master := range mt.aliveNodes {
@@ -170,39 +188,10 @@ func (mt *mastersTracker) chooseLeader() {
 	mt.newLeaderCh <- leaderIP
 }
 
-// getMasters returns a slice containing the UUID of all the
-// alive master nodes.
-func (mt *mastersTracker) getMasters() []string {
-	aliveMasters := make([]string, len(mt.aliveNodes))
-	i := 0
-	for uuid := range mt.aliveNodes {
-		aliveMasters[i] = uuid
-		i++
-	}
-	return aliveMasters
-}
-
-// getLeaderState returns a string representing the leader state
-// of this master (leader, not leader, or anarchy).
-func (mt *mastersTracker) getLeaderState() string {
-	return mt.state.String()
-}
-
-// getLeaderId retrieves the leader UUID (or a "no leader" message
-// if no leader has been chosen yet).
-func (mt *mastersTracker) getLeaderId() string {
-	return *mt.leaderUuid
-}
-
-// imLeader simply returns true if this master is the leader.
-func (mt *mastersTracker) imLeader() bool {
-	return (*mt.state == LEADER)
-}
-
 // -------------------------- Main eventLoop -------------------------
 
-// eventLoop for the mastersTracker.
-func (mt *mastersTracker) eventLoop() {
+// eventLoop for the tracker.
+func (mt *tracker) eventLoop() {
 	for {
 		select {
 		case data := <-mt.keepAliveCh:
@@ -217,4 +206,36 @@ func (mt *mastersTracker) eventLoop() {
 			mt.chooseLeader()
 		}
 	}
+}
+
+// TODO: Remove the function down here after refactor is completed
+// (They are all master responsabilities, not tracker)
+
+// getMasters returns a slice containing the UUID of all the
+// alive master nodes.
+func (mt *tracker) getMasters() []string {
+	aliveMasters := make([]string, len(mt.aliveNodes))
+	i := 0
+	for uuid := range mt.aliveNodes {
+		aliveMasters[i] = uuid
+		i++
+	}
+	return aliveMasters
+}
+
+// getLeaderState returns a string representing the leader state
+// of this master (leader, not leader, or anarchy).
+func (mt *tracker) getLeaderState() string {
+	return mt.state.String()
+}
+
+// getLeaderId retrieves the leader UUID (or a "no leader" message
+// if no leader has been chosen yet).
+func (mt *tracker) getLeaderId() string {
+	return *mt.leaderUuid
+}
+
+// imLeader simply returns true if this master is the leader.
+func (mt *tracker) imLeader() bool {
+	return (*mt.state == LEADER)
 }
