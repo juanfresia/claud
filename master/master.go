@@ -13,24 +13,6 @@ const (
 	maxMasterAmount = 100
 )
 
-// masterState keeps track of the leader election state.
-type masterState int
-
-const (
-	LEADER masterState = iota
-	NOT_LEADER
-	ANARCHY
-)
-
-func (ms masterState) String() string {
-	strMap := [...]string{
-		"LEADER",
-		"NOT LEADER",
-		"IN ANARCHY",
-	}
-	return strMap[ms]
-}
-
 // masterResourcesData represents the resources of a master node
 type masterResourcesData struct {
 	MasterUuid uuid.UUID
