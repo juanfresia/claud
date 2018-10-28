@@ -8,15 +8,9 @@ import (
 	"os/exec"
 	"strconv"
 	"sync/atomic"
-	"time"
 )
 
 // ----------------------- Data type definitions ----------------------
-
-const (
-	schedulerPort   = "2002"
-	connDialTimeout = time.Second
-)
 
 type schAction int
 
