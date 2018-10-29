@@ -42,10 +42,11 @@ func (k *masterKernel) restartscheduler(leaderIp string) {
 	imLeader := k.mt.imLeader()
 	if !imLeader {
 		// Tricky
+		// TODO: change this sleep for ticker
 		time.Sleep(learningTmr)
 	}
 	mastersAmount := int32(len(k.getMasters()))
-	k.sch.openConnections(leaderIp, imLeader, mastersAmount)
+	k.sch.start(leaderIp, imLeader, mastersAmount)
 }
 
 // ------------------ Functions for the masterServer -----------------
@@ -95,7 +96,6 @@ func (k *masterKernel) eventLoop() {
 		select {
 		case newLeader := <-k.newLeaderCh:
 			k.restartscheduler(newLeader)
-
 		}
 	}
 }

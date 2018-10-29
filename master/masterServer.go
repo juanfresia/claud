@@ -11,6 +11,9 @@ import (
 	"net/http"
 )
 
+// The UUID identifier of this master node
+var myUuid uuid.UUID
+
 // --------------------------- Server struct ---------------------------
 
 // MasterServer provides some nice HTTP API for the claud users.
