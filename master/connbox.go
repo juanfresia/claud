@@ -54,7 +54,7 @@ func newConnBox(fromMaster, toMaster chan Event) (*Connbox, error) {
 }
 
 func (cb *Connbox) startPassive() error {
-	fmt.Print("Connbox: startPassive\n")
+	masterLog.Info("Starting Connbox in passive mode on this master")
 	// Listen on all interfaces
 	ln, err := net.Listen("tcp", ":"+schedulerPort)
 	if err != nil {
@@ -66,23 +66,21 @@ func (cb *Connbox) startPassive() error {
 
 	// Accept connections on port
 	for {
-		fmt.Print("Connbox: awaiting for connections\n")
+		fmt.Print("Awaiting connections from other masters\n")
 		conn, err := ln.Accept()
 		if err != nil {
 			masterLog.Error("Leader couldn't socket accept: " + err.Error())
 			continue
 		}
-		fmt.Print("Connbox: new connection\n")
+		masterLog.Info("New connection with a follower stablished")
 		go cb.handleNewSocket(conn)
 	}
 }
 
 func (cb *Connbox) handleNewSocket(conn net.Conn) {
-	fmt.Print("Connbox: handling new socket\n")
 	s := newSocket(conn)
 	cb.addSocket(s)
 	s.launch()
-	fmt.Print("Connbox: new socket open\n")
 }
 
 func (cb *Connbox) addSocket(s *Socket) {
@@ -94,14 +92,14 @@ func (cb *Connbox) addSocket(s *Socket) {
 }
 
 func (cb *Connbox) startActive(addr string) error {
-	fmt.Print("Connbox: startActive\n")
+	masterLog.Info("Starting Connbox in active mode on this master")
 
 	conn, err := net.DialTimeout("tcp", addr, connDialTimeout)
 	if err != nil {
 		masterLog.Error("Couldn't connect to leader socket: " + err.Error())
 		return err
 	}
-	fmt.Print("Connbox: connection successfull\n")
+	fmt.Print("Master made contact with the leader\n")
 
 	s := newSocket(conn)
 	cb.addSocket(s)
@@ -116,12 +114,9 @@ func (cb *Connbox) eventLoop() {
 		select {
 		// Received a message from a peer
 		case event := <-cb.fromSocket:
-			fmt.Print("Connbox: new event from socket\n")
 			cb.toMaster <- event
 		case event := <-cb.fromMaster:
-			fmt.Print("Connbox: new event from master\n")
 			for _, c := range cb.connections {
-				fmt.Print("Connbox: sent to somebody\n")
 				c.fromConnbox <- event
 			}
 		}

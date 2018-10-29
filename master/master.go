@@ -6,9 +6,6 @@ import (
 	"github.com/satori/go.uuid"
 )
 
-// The UUID identifier of this master node
-var myUuid uuid.UUID
-
 const (
 	maxMasterAmount = 100
 )
