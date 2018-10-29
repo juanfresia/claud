@@ -40,15 +40,14 @@ func newScheduler(mem uint64) scheduler {
 	}
 	sch.connbox = cb
 
-	sch.mastersAmount = 0
 	// Initialize own resources data
 	ownResourcesData := masterResourcesData{myUuid, mem, mem}
-
 	sch.masterResources[myUuid.String()] = ownResourcesData
 
 	// This setup is global (do any registration before launching connbox)
 	gob.Register(map[string]masterResourcesData{})
 	gob.Register(jobData{})
+	gob.Register(masterResourcesData{})
 	return *sch
 }
 
@@ -154,13 +153,25 @@ func (sch *scheduler) getJobsTable() map[string]jobData {
 // -------------------- Leader Scheduler Functions --------------------
 
 func (sch *scheduler) leaderScheduler() error {
+	fmt.Print("Entering leader scheduler\n")
 	// Wait until all followers are connected
 	// This is the leader, which is already connected
 	var mastersConnected int32 = 1
 	for {
 		select {
-		case <-sch.fromConnbox:
+		case e := <-sch.fromConnbox:
+			fmt.Print("Received resources from one master\n")
 			// TODO: check message type is correct (SCH_RDY)
+			resources, ok := e.Payload.(masterResourcesData)
+			if !ok {
+				masterLog.Error("Received something strange as master resources")
+				// TODO: really change this
+				fmt.Print("Something went wrong\n")
+				return nil
+			}
+			uuid := resources.MasterUuid.String()
+			sch.masterResources[uuid] = resources
+			fmt.Print("Updated master resources\n")
 			mastersConnected += 1
 			if mastersConnected == sch.mastersAmount {
 				// Send resources updates to followers
@@ -176,15 +187,30 @@ func (sch *scheduler) leaderScheduler() error {
 // ------------------- Follower Scheduler Functions -------------------
 
 func (sch *scheduler) followerScheduler() error {
+	fmt.Print("Entering follower scheduler\n")
 	// Send resources to leader
 	// First send resources to the leader
 	mf := &masterResourcesData{MasterUuid: myUuid, MemFree: sch.memTotal, MemTotal: sch.memTotal}
 	event := Event{Type: SCH_RDY, Payload: mf}
 	sch.toConnbox <- event
 
+	fmt.Print("Sent resources to leader\n")
+
 	// Wait here for ready signal
-	for range sch.fromConnbox {
+	for e := range sch.fromConnbox {
+		fmt.Print("Received leader response\n")
 		// TODO: assert event type is correct
+		// Update resources with the info from leader
+		resources, ok := e.Payload.(map[string]masterResourcesData)
+		if !ok {
+			masterLog.Error("Received something strange as master resources")
+			// TODO: really change this
+			return nil
+		}
+		for uuid, data := range resources {
+			sch.masterResources[uuid] = data
+		}
+		fmt.Print("Master resources updated with info from leader\n")
 		break
 	}
 

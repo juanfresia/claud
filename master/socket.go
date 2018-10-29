@@ -2,6 +2,7 @@ package master
 
 import (
 	"encoding/gob"
+	"fmt"
 	"io"
 	"net"
 )
@@ -25,6 +26,8 @@ func newSocket(conn net.Conn) *Socket {
 	sock.enc = enc
 	sock.dec = dec
 
+	sock.fromSocket = make(chan Event, 10)
+
 	return sock
 }
 
@@ -35,8 +38,11 @@ func (s *Socket) launch() {
 
 func (s *Socket) send(event Event) {
 	// Send message thorugh socket
+	fmt.Print("Socket: sending some message\n")
+
 	err := s.enc.Encode(event)
 	if err != nil {
+		fmt.Printf("Socket: error sending message: %s\n", err)
 		// Log something here
 	}
 }
@@ -46,7 +52,10 @@ func (s *Socket) receiveLoop() {
 	var err error
 	for {
 		// Receive
+		fmt.Print("Socket: waiting for a message\n")
 		err = s.dec.Decode(&event)
+		fmt.Print("Socket: received something\n")
+
 		if err != nil {
 			if err == io.EOF {
 				// Exit
@@ -54,6 +63,7 @@ func (s *Socket) receiveLoop() {
 			}
 			// TODO: log error and continue
 		} else {
+			fmt.Print("Socket: received something - sending to eventLoop\n")
 			s.fromSocket <- event
 		}
 	}
@@ -64,8 +74,10 @@ func (s *Socket) eventLoop() {
 		select {
 		// Received a message from connbox
 		case event := <-s.fromConnbox:
+			fmt.Print("Socket: new event from connbox\n")
 			s.send(event)
 		case event := <-s.fromSocket:
+			fmt.Print("Socket: new event from socket\n")
 			s.toConnbox <- event
 		}
 	}
