@@ -10,6 +10,41 @@ import (
 
 // ----------------------- Data type definitions ----------------------
 
+// masterResourcesData represents the resources of a master node
+type masterResourcesData struct {
+	MasterUuid uuid.UUID
+	MemFree    uint64
+	MemTotal   uint64
+}
+
+// jobState tracks the state of a running job.
+type jobState int
+
+const (
+	JOB_RUNNING jobState = iota
+	JOB_FINISHED
+	JOB_FAILED
+)
+
+func (js jobState) String() string {
+	strMap := [...]string{
+		"RUNNING",
+		"FINISHED",
+		"FAILED",
+	}
+	return strMap[js]
+}
+
+// jobData represents all the info of a running/to run job
+type jobData struct {
+	JobName        string
+	ImageName      string
+	MemUsage       uint64
+	AssignedMaster string
+	JobId          string
+	JobStatus      jobState
+}
+
 type scheduler struct {
 	mastersAmount   int32
 	memTotal        uint64
@@ -25,6 +60,25 @@ type scheduler struct {
 
 // ----------------------------- Functions ----------------------------
 
+func registerEventPayloads() {
+	// This setup is global (do any registration before launching connbox)
+	gob.Register(map[string]masterResourcesData{})
+	gob.Register(jobData{})
+	gob.Register(masterResourcesData{})
+}
+
+func (sch *scheduler) updateTablesWithJob(job jobData, isLaunched bool) {
+	assignedMaster := job.AssignedMaster
+	assignedData := sch.masterResources[assignedMaster]
+	if isLaunched {
+		assignedData.MemFree -= job.MemUsage
+	} else {
+		assignedData.MemFree += job.MemUsage
+	}
+	sch.masterResources[assignedMaster] = assignedData
+	sch.jobsTable[job.JobId] = job
+}
+
 func newScheduler(mem uint64) scheduler {
 	sch := &scheduler{memTotal: mem}
 	sch.masterResources = make(map[string]masterResourcesData)
@@ -34,20 +88,13 @@ func newScheduler(mem uint64) scheduler {
 	sch.toConnbox = make(chan Event, 10)
 	sch.fromConnbox = make(chan Event, 10)
 
-	cb, err := newConnBox(sch.toConnbox, sch.fromConnbox)
-	if err != nil {
-		// TODO: do something
-	}
-	sch.connbox = cb
+	sch.connbox = newConnBox(sch.toConnbox, sch.fromConnbox)
 
 	// Initialize own resources data
 	ownResourcesData := masterResourcesData{myUuid, mem, mem}
 	sch.masterResources[myUuid.String()] = ownResourcesData
 
-	// This setup is global (do any registration before launching connbox)
-	gob.Register(map[string]masterResourcesData{})
-	gob.Register(jobData{})
-	gob.Register(masterResourcesData{})
+	registerEventPayloads()
 	return *sch
 }
 
@@ -84,11 +131,7 @@ func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 		masterLog.Info("Job finished on the leader!!")
 
 		sch.toConnbox <- Event{Type: SCH_JOB_END, Payload: *job}
-
-		assignedData := sch.masterResources[job.AsignedMaster]
-		assignedData.MemFree += job.MemUsage
-		sch.masterResources[job.AsignedMaster] = assignedData
-		sch.jobsTable[job.JobId] = *job
+		sch.updateTablesWithJob(*job, false)
 	}
 }
 
@@ -125,17 +168,14 @@ func (sch *scheduler) launchJob(jobName string, memUsage uint64, imageName strin
 	}
 
 	masterLog.Info("Ordering " + assignedMaster + " to launch a new job")
-	job := jobData{JobName: jobName, MemUsage: memUsage, AsignedMaster: assignedMaster}
+	job := jobData{JobName: jobName, MemUsage: memUsage, AssignedMaster: assignedMaster}
 	job.ImageName = imageName
 	job.JobId = uuid.NewV4().String()
 	job.JobStatus = JOB_RUNNING
 
 	sch.toConnbox <- Event{Type: SCH_JOB, Payload: job}
+	sch.updateTablesWithJob(job, true)
 
-	assignedData := sch.masterResources[assignedMaster]
-	assignedData.MemFree -= memUsage
-	sch.masterResources[assignedMaster] = assignedData
-	sch.jobsTable[job.JobId] = job
 	if assignedMaster == myUuid.String() {
 		go sch.spawnJob(&job, true)
 	}
@@ -241,11 +281,8 @@ func (sch *scheduler) handleFollowerEvent(e Event) {
 			return
 		}
 		masterLog.Info("Received new job data from leader!\n")
-		assignedData := sch.masterResources[job.AsignedMaster]
-		assignedData.MemFree -= job.MemUsage
-		sch.masterResources[job.AsignedMaster] = assignedData
-		sch.jobsTable[job.JobId] = job
-		if job.AsignedMaster == myUuid.String() {
+		sch.updateTablesWithJob(job, true)
+		if job.AssignedMaster == myUuid.String() {
 			go sch.followerJobSpawner(job)
 		}
 	case SCH_JOB_END:
@@ -254,10 +291,7 @@ func (sch *scheduler) handleFollowerEvent(e Event) {
 			masterLog.Error("Received something strange as job data")
 			return
 		}
-		assignedData := sch.masterResources[job.AsignedMaster]
-		assignedData.MemFree += job.MemUsage
-		sch.masterResources[job.AsignedMaster] = assignedData
-		sch.jobsTable[job.JobId] = job
+		sch.updateTablesWithJob(job, false)
 	default:
 		// Should never happen
 		masterLog.Error("Received wrong sch action!")
@@ -274,10 +308,7 @@ func (sch *scheduler) handelLeaderEvent(e Event) {
 		}
 		sch.toConnbox <- e
 		masterLog.Info("Job finished on this master with status: " + job.JobStatus.String())
-		assignedData := sch.masterResources[job.AsignedMaster]
-		assignedData.MemFree += job.MemUsage
-		sch.masterResources[job.AsignedMaster] = assignedData
-		sch.jobsTable[job.JobId] = job
+		sch.updateTablesWithJob(job, false)
 	case SCH_JOB:
 		// Check the msgScheduler has a jobData and forward it to the follower
 		_, ok := e.Payload.(jobData)

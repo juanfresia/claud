@@ -6,6 +6,10 @@ import (
 	//"github.com/satori/go.uuid"
 )
 
+const (
+	maxMasterAmount = 100
+)
+
 // ----------------------- Data type definitions ----------------------
 
 // masterKernel is the core of all masters. The different master

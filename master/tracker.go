@@ -168,9 +168,9 @@ func (mt *tracker) resetAnarchyTimer() {
 func (mt *tracker) chooseLeader() {
 	masterLog.Info("ANARCHY has ended. Choosing a new leader")
 	leader := mt.aliveNodes[myUuid.String()]
-	for _, master := range mt.aliveNodes {
-		if master.uuid <= leader.uuid {
-			leader = master
+	for _, node := range mt.aliveNodes {
+		if node.uuid <= leader.uuid {
+			leader = node
 		}
 	}
 

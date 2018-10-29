@@ -39,7 +39,7 @@ type Connbox struct {
 	ready chan bool
 }
 
-func newConnBox(fromMaster, toMaster chan Event) (*Connbox, error) {
+func newConnBox(fromMaster, toMaster chan Event) *Connbox {
 	cb := &Connbox{}
 	cb.toMaster = toMaster
 	cb.fromMaster = fromMaster
@@ -50,7 +50,7 @@ func newConnBox(fromMaster, toMaster chan Event) (*Connbox, error) {
 	cb.close = make(chan bool, 1)
 	cb.fromSocket = make(chan Event)
 
-	return cb, nil
+	return cb
 }
 
 func (cb *Connbox) startPassive() error {
