@@ -11,8 +11,19 @@ const (
 	connDialTimeout = time.Second
 )
 
+type EventType int
+
+const (
+	SCH_ACK EventType = iota
+	SCH_RDY
+	SCH_RES
+	SCH_JOB
+	SCH_JOB_END
+)
+
 type Event struct {
-	// Payload
+	Type    EventType
+	Payload interface{}
 }
 
 type Connbox struct {
@@ -24,6 +35,7 @@ type Connbox struct {
 	fromSocket      chan Event
 
 	close chan<- bool
+	ready chan bool
 }
 
 func newConnBox(fromMaster, toMaster chan Event) (*Connbox, error) {
@@ -40,7 +52,6 @@ func newConnBox(fromMaster, toMaster chan Event) (*Connbox, error) {
 }
 
 func (cb *Connbox) startPassive() error {
-	var mastersConnected int32 = 0
 	// Listen on all interfaces
 	ln, err := net.Listen("tcp", ":"+schedulerPort)
 	if err != nil {
@@ -54,11 +65,11 @@ func (cb *Connbox) startPassive() error {
 			masterLog.Error("Leader couldn't socket accept: " + err.Error())
 			continue
 		}
-		go cb.handleNewSocket(conn, mastersConnected)
+		go cb.handleNewSocket(conn)
 	}
 }
 
-func (cb *Connbox) handleNewSocket(conn net.Conn, connId int32) {
+func (cb *Connbox) handleNewSocket(conn net.Conn) {
 	s := newSocket(conn)
 	cb.addSocket(s)
 	s.launch()
@@ -72,7 +83,7 @@ func (cb *Connbox) addSocket(s *Socket) {
 	cb.connectionsLock.Unlock()
 }
 
-func (cb *Connbox) stratActive(addr string) error {
+func (cb *Connbox) startActive(addr string) error {
 	conn, err := net.DialTimeout("tcp", addr, connDialTimeout)
 	if err != nil {
 		masterLog.Error("Couldn't connect to leader socket: " + err.Error())
