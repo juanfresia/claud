@@ -130,7 +130,7 @@ func (sch *scheduler) spawnJob(job *jobData, imLeader bool) {
 	if imLeader {
 		masterLog.Info("Job finished on the leader!!")
 
-		sch.toConnbox <- Event{Type: SCH_JOB_END, Payload: *job}
+		sch.toConnbox <- Event{Type: EV_JOBEND_L, Payload: *job}
 		sch.updateTablesWithJob(*job, false)
 	}
 }
@@ -153,7 +153,7 @@ func (sch *scheduler) stopJob(jobID string) string {
 }
 
 // launchJob selects a node with enough resources for launching the job,
-// and forwards a msgScheduler with Action: SCH_JOB to all connections via
+// and forwards a msgScheduler with Type: EV_JOB_L to all connections via
 // the sch.toConnbox. It returns the JobId of the created job.
 func (sch *scheduler) launchJob(jobName string, memUsage uint64, imageName string) string {
 	assignedMaster := ""
@@ -173,7 +173,7 @@ func (sch *scheduler) launchJob(jobName string, memUsage uint64, imageName strin
 	job.JobId = uuid.NewV4().String()
 	job.JobStatus = JOB_RUNNING
 
-	sch.toConnbox <- Event{Type: SCH_JOB, Payload: job}
+	sch.toConnbox <- Event{Type: EV_JOB_L, Payload: job}
 	sch.updateTablesWithJob(job, true)
 
 	if assignedMaster == myUuid.String() {
@@ -201,7 +201,7 @@ func (sch *scheduler) leaderScheduler() error {
 		select {
 		case e := <-sch.fromConnbox:
 			fmt.Print("Received resources from one master\n")
-			// TODO: check message type is correct (SCH_RDY)
+			// TODO: check message type is correct (EV_RES_F)
 			resources, ok := e.Payload.(masterResourcesData)
 			if !ok {
 				masterLog.Error("Received something strange as master resources")
@@ -217,7 +217,7 @@ func (sch *scheduler) leaderScheduler() error {
 				// Send resources updates to followers
 				fmt.Print("Sending master resources to followers\n")
 				// Send all master resources to followers
-				sch.toConnbox <- Event{Type: SCH_RES, Payload: sch.masterResources}
+				sch.toConnbox <- Event{Type: EV_RES_L, Payload: sch.masterResources}
 				return nil
 			}
 		}
@@ -231,7 +231,7 @@ func (sch *scheduler) followerScheduler() error {
 	// Send resources to leader
 	// First send resources to the leader
 	mf := &masterResourcesData{MasterUuid: myUuid, MemFree: sch.memTotal, MemTotal: sch.memTotal}
-	event := Event{Type: SCH_RDY, Payload: mf}
+	event := Event{Type: EV_RES_F, Payload: mf}
 	sch.toConnbox <- event
 
 	fmt.Print("Sent resources to leader\n")
@@ -260,7 +260,7 @@ func (sch *scheduler) followerScheduler() error {
 // This function handles events from peers
 func (sch *scheduler) handleFollowerEvent(e Event) {
 	switch e.Type {
-	case SCH_RES:
+	case EV_RES_L:
 		// Update resources with the info from leader
 		resources, ok := e.Payload.(map[string]masterResourcesData)
 		if !ok {
@@ -271,7 +271,7 @@ func (sch *scheduler) handleFollowerEvent(e Event) {
 			sch.masterResources[uuid] = data
 		}
 		fmt.Print("Master resources updated with info from leader\n")
-	case SCH_JOB:
+	case EV_JOB_L:
 		// If the job needs to be launched on my machine, then
 		// REALLY launch the job. Update the masterResources table
 		// and the jobsTable.
@@ -285,7 +285,7 @@ func (sch *scheduler) handleFollowerEvent(e Event) {
 		if job.AssignedMaster == myUuid.String() {
 			go sch.followerJobSpawner(job)
 		}
-	case SCH_JOB_END:
+	case EV_JOBEND_L:
 		job, ok := e.Payload.(jobData)
 		if !ok {
 			masterLog.Error("Received something strange as job data")
@@ -298,18 +298,19 @@ func (sch *scheduler) handleFollowerEvent(e Event) {
 	}
 }
 
-func (sch *scheduler) handelLeaderEvent(e Event) {
+func (sch *scheduler) handleLeaderEvent(e Event) {
 	switch e.Type {
-	case SCH_JOB_END:
+	case EV_JOBEND_F:
 		job, ok := e.Payload.(jobData)
 		if !ok {
 			masterLog.Error("Received something strange as job data")
 			return
 		}
+		e.Type = EV_JOBEND_L
 		sch.toConnbox <- e
 		masterLog.Info("Job finished on this master with status: " + job.JobStatus.String())
 		sch.updateTablesWithJob(job, false)
-	case SCH_JOB:
+	case EV_JOB_L:
 		// Check the msgScheduler has a jobData and forward it to the follower
 		_, ok := e.Payload.(jobData)
 		if !ok {
@@ -328,7 +329,7 @@ func (sch *scheduler) eventLoop(imLeader bool) {
 		select {
 		case msg := <-sch.fromConnbox:
 			if imLeader {
-				sch.handelLeaderEvent(msg)
+				sch.handleLeaderEvent(msg)
 			} else {
 				sch.handleFollowerEvent(msg)
 			}
@@ -337,9 +338,9 @@ func (sch *scheduler) eventLoop(imLeader bool) {
 }
 
 func (sch *scheduler) followerJobSpawner(job jobData) {
-	event := Event{Type: SCH_JOB_END}
 	sch.spawnJob(&job, false)
 	masterLog.Info("Job finished on this follower master!")
+	event := Event{Type: EV_JOBEND_F}
 	event.Payload = job
 	sch.toConnbox <- event
 }

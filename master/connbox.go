@@ -15,11 +15,13 @@ const (
 type EventType int
 
 const (
-	SCH_ACK EventType = iota
-	SCH_RDY
-	SCH_RES
-	SCH_JOB
-	SCH_JOB_END
+	EV_ACK EventType = iota
+	EV_RES_F
+	EV_RES_L
+	EV_JOB_L
+	EV_JOB_F
+	EV_JOBEND_L
+	EV_JOBEND_F
 )
 
 type Event struct {
