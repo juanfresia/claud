@@ -8,18 +8,19 @@ import (
 )
 
 const (
-	schedulerPort   = "2002"
 	connDialTimeout = time.Second
 )
 
 type EventType int
 
 const (
-	SCH_ACK EventType = iota
-	SCH_RDY
-	SCH_RES
-	SCH_JOB
-	SCH_JOB_END
+	EV_ACK EventType = iota
+	EV_RES_F
+	EV_RES_L
+	EV_JOB_L
+	EV_JOB_F
+	EV_JOBEND_L
+	EV_JOBEND_F
 )
 
 type Event struct {
@@ -27,7 +28,7 @@ type Event struct {
 	Payload interface{}
 }
 
-type Connbox struct {
+type connbox struct {
 	toMaster   chan<- Event // write only channel
 	fromMaster <-chan Event // read only channel
 
@@ -39,8 +40,8 @@ type Connbox struct {
 	ready chan bool
 }
 
-func newConnBox(fromMaster, toMaster chan Event) (*Connbox, error) {
-	cb := &Connbox{}
+func newConnBox(fromMaster, toMaster chan Event) *connbox {
+	cb := &connbox{}
 	cb.toMaster = toMaster
 	cb.fromMaster = fromMaster
 
@@ -50,13 +51,13 @@ func newConnBox(fromMaster, toMaster chan Event) (*Connbox, error) {
 	cb.close = make(chan bool, 1)
 	cb.fromSocket = make(chan Event)
 
-	return cb, nil
+	return cb
 }
 
-func (cb *Connbox) startPassive() error {
-	masterLog.Info("Starting Connbox in passive mode on this master")
+func (cb *connbox) startPassive(leaderPort string) error {
+	masterLog.Info("Starting connbox in passive mode on this master")
 	// Listen on all interfaces
-	ln, err := net.Listen("tcp", ":"+schedulerPort)
+	ln, err := net.Listen("tcp", ":"+leaderPort)
 	if err != nil {
 		masterLog.Error("Leader couldn't socket listen: " + err.Error())
 		return err
@@ -77,13 +78,13 @@ func (cb *Connbox) startPassive() error {
 	}
 }
 
-func (cb *Connbox) handleNewSocket(conn net.Conn) {
+func (cb *connbox) handleNewSocket(conn net.Conn) {
 	s := newSocket(conn)
 	cb.addSocket(s)
 	s.launch()
 }
 
-func (cb *Connbox) addSocket(s *Socket) {
+func (cb *connbox) addSocket(s *Socket) {
 	cb.connectionsLock.Lock()
 	s.toConnbox = cb.fromSocket
 	s.fromConnbox = make(chan Event, 10)
@@ -91,8 +92,8 @@ func (cb *Connbox) addSocket(s *Socket) {
 	cb.connectionsLock.Unlock()
 }
 
-func (cb *Connbox) startActive(addr string) error {
-	masterLog.Info("Starting Connbox in active mode on this master")
+func (cb *connbox) startActive(addr string) error {
+	masterLog.Info("Starting connbox in active mode on this master")
 
 	conn, err := net.DialTimeout("tcp", addr, connDialTimeout)
 	if err != nil {
@@ -109,7 +110,7 @@ func (cb *Connbox) startActive(addr string) error {
 	return nil
 }
 
-func (cb *Connbox) eventLoop() {
+func (cb *connbox) eventLoop() {
 	for {
 		select {
 		// Received a message from a peer

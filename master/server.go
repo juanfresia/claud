@@ -91,7 +91,7 @@ func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 		thisJobData["job_full_name"] = data.JobName + "-" + data.JobId
 		thisJobData["job_id"] = data.JobId
 		thisJobData["image"] = data.ImageName
-		thisJobData["asigned_master"] = data.AsignedMaster
+		thisJobData["asigned_master"] = data.AssignedMaster
 		thisJobData["status"] = data.JobStatus.String()
 
 		jobsDataArray[i] = thisJobData
@@ -120,7 +120,7 @@ func (m *MasterServer) stopJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobHostID := jobToKill.AsignedMaster
+	jobHostID := jobToKill.AssignedMaster
 	if jobHostID != myUuid.String() {
 		// TODO: Forward to master node where job is running
 		w.WriteHeader(http.StatusForbidden)
