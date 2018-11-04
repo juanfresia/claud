@@ -208,8 +208,8 @@ func (mt *tracker) eventLoop() {
 	}
 }
 
-// TODO: Remove the function down here after refactor is completed
-// (They are all master responsabilities, not tracker)
+// TODO: Review the functions down here after refactor is completed
+// (most are master responsabilities, not tracker)
 
 // getMasters returns a slice containing the UUID of all the
 // alive master nodes.

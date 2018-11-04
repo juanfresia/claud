@@ -2,6 +2,7 @@ package master
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"github.com/satori/go.uuid"
 	"os/exec"
@@ -51,8 +52,9 @@ type jobData struct {
 	JobStatus      jobState
 }
 
-// masterKernel is the module that kedules and launches jobs
-// on the different masters.
+// masterKernel is the module that schedules and launches jobs on
+// the different masters. It uses the tracker to know whether or
+// not it should behave as the leader of all masters.
 type masterKernel struct {
 	mt          tracker
 	newLeaderCh chan string
@@ -70,7 +72,7 @@ type masterKernel struct {
 }
 
 // -------------------------------------------------------------------
-//                               Functions
+//                          General Functions
 // -------------------------------------------------------------------
 
 // newMasterKernel creates a new masterKernel together with
@@ -91,62 +93,54 @@ func newMasterKernel(mem uint64) masterKernel {
 	k.connbox = newConnBox(k.toConnbox, k.fromConnbox)
 
 	// Initialize own resources data
-	ownResourcesData := masterResourcesData{myUuid, mem, mem}
-	k.masterResources[myUuid.String()] = ownResourcesData
+	k.masterResources[myUuid.String()] = masterResourcesData{myUuid, mem, mem}
 
 	registerEventPayloads()
 
 	go k.eventLoop()
-
 	fmt.Println("Master Kernel is up!")
 	return *k
 }
 
+// registerEventPayloads registers on the gob encoder/decoder the
+// structs that will be used as payload for an Event.
 func registerEventPayloads() {
-	// This setup is global (do any registration before launching connbox)
 	gob.Register(map[string]masterResourcesData{})
 	gob.Register(jobData{})
 	gob.Register(masterResourcesData{})
 }
 
-func (k *masterKernel) updateTablesWithJob(job jobData, isLaunched bool) {
-	assignedMaster := job.AssignedMaster
-	assignedData := k.masterResources[assignedMaster]
-	if isLaunched {
-		assignedData.MemFree -= job.MemUsage
-	} else {
-		assignedData.MemFree += job.MemUsage
-	}
-	k.masterResources[assignedMaster] = assignedData
-	k.jobsTable[job.JobId] = job
-}
-
+// connectWithFollowers makes the leader wait for all followers
+// to make contact sending their resources. The function gathers
+// all the followers resources on the masterResources table and
+// forwards all that info to all followers. Must be called after
+// opening the connbox in passive mode.
 func (k *masterKernel) connectWithFollowers() error {
 	masterLog.Info("Starting connection as leader master")
 	// Wait until all followers are connected
-	// This is the leader, which is already connected
-	var mastersConnected int32 = 1
+	var mastersConnected int32 = 1 // This master's already connected
 	for {
 		select {
 		case e := <-k.fromConnbox:
 			masterLog.Info("Received resources from one master")
-			// TODO: check message type is correct (EV_RES_F)
+
 			resources, ok := e.Payload.(masterResourcesData)
+			if e.Type != EV_RES_F {
+				masterLog.Error("Received a wrong event type when connecting with followers")
+				return errors.New("Received a wrong event type when connecting with followers")
+			}
 			if !ok {
 				masterLog.Error("Received something strange as master resources")
-				// TODO: really change this
-				fmt.Print("Something went wrong\n")
-				return nil
+				return errors.New("Received something strange as master resources")
 			}
-			uuid := resources.MasterUuid.String()
-			k.masterResources[uuid] = resources
+
+			k.masterResources[resources.MasterUuid.String()] = resources
 			masterLog.Info("Updated master resources")
 			mastersConnected += 1
 			if mastersConnected == k.mastersAmount {
-				// Send resources updates to followers
+				// Send all master resources to followers
 				masterLog.Info("Sending master resources to followers\n")
 				fmt.Print("Sending master resources to followers")
-				// Send all master resources to followers
 				k.toConnbox <- Event{Type: EV_RES_L, Payload: k.masterResources}
 				return nil
 			}
@@ -154,26 +148,30 @@ func (k *masterKernel) connectWithFollowers() error {
 	}
 }
 
+// connectWithLeader makes the follower send its resources to the
+// leader, and wait until a response with the resources of all
+// followers is received. Must be called after opening the
+// connbox in passive mode.
 func (k *masterKernel) connectWithLeader() error {
 	masterLog.Info("Starting connection as follower master")
-	// Send resources to leader
 	// First send resources to the leader
 	mf := &masterResourcesData{MasterUuid: myUuid, MemFree: k.memTotal, MemTotal: k.memTotal}
 	event := Event{Type: EV_RES_F, Payload: mf}
 	k.toConnbox <- event
 
 	masterLog.Info("Sent resources to leader")
-
-	// Wait here for ready signal
+	// Wait here for ready signal from leader
 	for e := range k.fromConnbox {
 		masterLog.Info("Received leader response")
-		// TODO: assert event type is correct
 		// Update resources with the info from leader
 		resources, ok := e.Payload.(map[string]masterResourcesData)
+		if e.Type != EV_RES_L {
+			masterLog.Error("Received a wrong event type when connecting with leader")
+			return errors.New("Received a wrong event type when connecting with leader")
+		}
 		if !ok {
-			masterLog.Error("Received something strange as master resources")
-			// TODO: really change this
-			return nil
+			masterLog.Error("Received something strange as leader resources")
+			return errors.New("Received something strange as leader resources")
 		}
 		for uuid, data := range resources {
 			k.masterResources[uuid] = data
@@ -189,9 +187,9 @@ func (k *masterKernel) connectWithLeader() error {
 // restartConnBox reopens all connections on the connbox module.
 // Should be called every time a new leader is chosen.
 func (k *masterKernel) restartConnBox(leaderIp string) {
-	imLeader := k.mt.imLeader()
+	// TODO: Close current connbox connections via the channel
 	k.mastersAmount = int32(len(k.getMasters()))
-	if imLeader {
+	if k.mt.imLeader() {
 		go k.connbox.startPassive(leaderPort)
 		k.connectWithFollowers()
 	} else {
@@ -202,15 +200,30 @@ func (k *masterKernel) restartConnBox(leaderIp string) {
 	}
 }
 
-func (k *masterKernel) followerJobSpawner(job jobData) {
-	k.spawnJob(&job, false)
-	masterLog.Info("Job finished on this follower master!")
-	event := Event{Type: EV_JOBEND_F}
-	event.Payload = job
-	k.toConnbox <- event
+// -------------------------------------------------------------------
+//                       Job specific Functions
+// -------------------------------------------------------------------
+
+// updateTablesWithJob updates the masterResources table and the
+// jobsTable with the info on the received jobData. Use the extra
+// argument isLaunched to indicate whether the job is being
+// launched (true) or stopped (false).
+func (k *masterKernel) updateTablesWithJob(job jobData, isLaunched bool) {
+	assignedMaster := job.AssignedMaster
+	assignedData := k.masterResources[assignedMaster]
+	if isLaunched {
+		assignedData.MemFree -= job.MemUsage
+	} else {
+		assignedData.MemFree += job.MemUsage
+	}
+	k.masterResources[assignedMaster] = assignedData
+	k.jobsTable[job.JobId] = job
 }
 
-func (k *masterKernel) spawnJob(job *jobData, imLeader bool) {
+// spawnJob launches a new job on this node using the given
+// jobData. After the job is finished, it forwards an event to
+// the connbox and updates the tables.
+func (k *masterKernel) spawnJob(job *jobData) {
 	masterLog.Info("Launching job on this node: " + job.JobName)
 	jobFullName := job.JobName + "-" + job.JobId
 	cmd := "sudo docker run --rm -m " + strconv.FormatUint(job.MemUsage, 10) + "m --name " + jobFullName + " " + job.ImageName
@@ -223,17 +236,22 @@ func (k *masterKernel) spawnJob(job *jobData, imLeader bool) {
 	} else {
 		job.JobStatus = JOB_FINISHED
 	}
-
-	// If this was the leader, tell the followers the job has finished
-	if imLeader {
+	// Tell the other masters the job has finished and update the tables
+	if k.mt.imLeader() {
+		// If this was the leader, tell the followers the job has finished
 		masterLog.Info("Job finished on the leader!!")
-
 		k.toConnbox <- Event{Type: EV_JOBEND_L, Payload: *job}
-		k.updateTablesWithJob(*job, false)
+	} else {
+		// If this was a follower, tell the leader the job has finished
+		masterLog.Info("Job finished on this follower master!")
+		k.toConnbox <- Event{Type: EV_JOBEND_F, Payload: *job}
 	}
+	k.updateTablesWithJob(*job, false)
 }
 
-// ------------------ Functions for the masterServer -----------------
+// --------------------- Functions for the server --------------------
+
+// TODO: Review the functions down here after refactor is completed
 
 // getMasters returns a slice containing the UUID of all the
 // alive master nodes.
@@ -282,7 +300,7 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 	k.updateTablesWithJob(job, true)
 
 	if assignedMaster == myUuid.String() {
-		go k.spawnJob(&job, true)
+		go k.spawnJob(&job)
 	}
 	return job.JobId
 }
@@ -320,15 +338,17 @@ func (k *masterKernel) eventLoop() {
 
 		case msg := <-k.fromConnbox:
 			if k.mt.imLeader() {
-				k.handleLeaderEvent(msg)
+				k.handleEventOnLeader(msg)
 			} else {
-				k.handleFollowerEvent(msg)
+				k.handleEventOnFollower(msg)
 			}
 		}
 	}
 }
 
-func (k *masterKernel) handleFollowerEvent(e Event) {
+// handleEventOnFollower handles all Events forwarded by the connbox
+// in a master follower.
+func (k *masterKernel) handleEventOnFollower(e Event) {
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader
@@ -343,8 +363,7 @@ func (k *masterKernel) handleFollowerEvent(e Event) {
 		fmt.Print("Master resources updated with info from leader\n")
 	case EV_JOB_L:
 		// If the job needs to be launched on my machine, then
-		// REALLY launch the job. Update the masterResources table
-		// and the jobsTable.
+		// REALLY launch the job.
 		job, ok := e.Payload.(jobData)
 		if !ok {
 			masterLog.Error("Received something strange as job data")
@@ -353,7 +372,7 @@ func (k *masterKernel) handleFollowerEvent(e Event) {
 		masterLog.Info("Received new job data from leader!\n")
 		k.updateTablesWithJob(job, true)
 		if job.AssignedMaster == myUuid.String() {
-			go k.followerJobSpawner(job)
+			go k.spawnJob(&job)
 		}
 	case EV_JOBEND_L:
 		job, ok := e.Payload.(jobData)
@@ -368,7 +387,9 @@ func (k *masterKernel) handleFollowerEvent(e Event) {
 	}
 }
 
-func (k *masterKernel) handleLeaderEvent(e Event) {
+//handleEventOnLeader handles all Events forwarded by the connbox
+// in the master leader.
+func (k *masterKernel) handleEventOnLeader(e Event) {
 	switch e.Type {
 	case EV_JOBEND_F:
 		job, ok := e.Payload.(jobData)
