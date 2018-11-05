@@ -10,7 +10,7 @@ BIN_DIR := bin
 BUILD_FLAGS := -X $(REPO)/claud/cmd.version=$(VERSION)
 BUILD_FLAGS += -X $(REPO)/claud/cmd.commit=$(COMMIT)
 BUILD_FLAGS += -X $(REPO)/claud/cmd.branch=$(BRANCH)
-BUILD_FLAGS := -ldflags "$(BUILD_FLAGS)" -v --race
+BUILD_FLAGS := -ldflags "$(BUILD_FLAGS)" -v
 
 all: fmt
 	go build $(BUILD_FLAGS) -o $(BIN_DIR)/claud "$(REPO)/claud"

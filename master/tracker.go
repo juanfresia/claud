@@ -46,11 +46,12 @@ type masterData struct {
 // tracker goal is to keep a table of alive masters nodes for
 // choosing a leader. It reads and writes the UDP multicastAddr.
 type tracker struct {
-	mu         *sync.Mutex
-	aliveNodes map[string]masterData
-	state      *masterState
-	leaderUuid *string
-	anarchyTmr *time.Timer
+	mu          *sync.Mutex
+	clusterSize int
+	aliveNodes  map[string]masterData
+	state       *masterState
+	leaderUuid  *string
+	anarchyTmr  *time.Timer
 
 	keepAliveCh  chan masterData
 	deadMasterCh chan string
@@ -61,9 +62,10 @@ type tracker struct {
 
 // newtracker creates m tracker and launches goroutines
 // for listening and writing the UDP multicast address.
-func newtracker(newLeaderCh chan<- string) tracker {
+func newtracker(newLeaderCh chan<- string, clusterSize uint) tracker {
 	mt := &tracker{newLeaderCh: newLeaderCh}
 	mt.state = new(masterState)
+	mt.clusterSize = int(clusterSize)
 	mt.leaderUuid = new(string)
 	*mt.state = ANARCHY
 	*mt.leaderUuid = "NO LEADER"
@@ -208,14 +210,20 @@ func (mt *tracker) eventLoop() {
 		select {
 		case data := <-mt.keepAliveCh:
 			new_master := mt.trackMasterNode(data.uuid, data.addr)
-			if new_master {
+			if new_master && (len(mt.aliveNodes) < mt.clusterSize) {
 				mt.resetAnarchyTimer()
 			}
 		case corpse := <-mt.deadMasterCh:
 			mt.killDeadMaster(corpse)
-			mt.resetAnarchyTimer()
+			if len(mt.aliveNodes) < mt.clusterSize {
+				mt.resetAnarchyTimer()
+			}
 		case <-mt.anarchyTmr.C:
-			mt.chooseLeader()
+			if len(mt.aliveNodes) >= mt.clusterSize {
+				mt.chooseLeader()
+			} else {
+				mt.resetAnarchyTimer()
+			}
 		}
 	}
 }
