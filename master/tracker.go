@@ -46,6 +46,7 @@ type KeepAliveMessage struct {
 // a master node.
 type masterData struct {
 	uuid  string
+	state masterState
 	addr  *net.UDPAddr
 	timer *time.Timer
 }
@@ -61,7 +62,7 @@ type tracker struct {
 	anarchyTmr  *time.Timer
 
 	keepAliveCh  chan masterData
-	deadMasterCh chan string
+	deadMasterCh chan masterData
 	newLeaderCh  chan<- string
 }
 
@@ -79,7 +80,7 @@ func newtracker(newLeaderCh chan<- string, clusterSize uint) tracker {
 	mt.aliveNodes = make(map[string]masterData)
 
 	mt.keepAliveCh = make(chan masterData, maxMasterAmount)
-	mt.deadMasterCh = make(chan string, maxMasterAmount)
+	mt.deadMasterCh = make(chan masterData, maxMasterAmount)
 
 	mt.anarchyTmr = time.NewTimer(learningTmr)
 
@@ -99,14 +100,14 @@ func (mt *tracker) keepAliveSender(multicastAddr string) {
 		masterLog.Error("UDP socket creation failed: " + err.Error())
 	}
 	c, err := net.DialUDP("udp", nil, addr)
-	msg := KeepAliveMessage{myUuid.String(), *mt.state}
-	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
-		masterLog.Error("gob encoidng failed for keepalive message: " + err.Error())
-	}
 
 	// TODO: change this for a ticker (to be able to gracefully quit)
 	for {
+		msg := KeepAliveMessage{myUuid.String(), *mt.state}
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
+			masterLog.Error("gob encoidng failed for keepalive message: " + err.Error())
+		}
 		c.Write(buf.Bytes())
 		time.Sleep(keepAliveTmr)
 	}
@@ -136,8 +137,7 @@ func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 			masterLog.Error("gob decodidng failed for keepalive message: " + err.Error())
 			continue
 		}
-		uuidReceived := msg.Uuid
-		mt.keepAliveCh <- masterData{uuid: uuidReceived, addr: src}
+		mt.keepAliveCh <- masterData{uuid: msg.Uuid, addr: src, state: msg.State}
 	}
 }
 
@@ -145,24 +145,27 @@ func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 // nodes table, launching a defunct timer every time. Returns true if
 // a new master has appeared (meaning a new leader election should
 // take place on the trackers of all master nodes).
-func (mt *tracker) trackMasterNode(masterUuid string, addr *net.UDPAddr) bool {
+func (mt *tracker) trackMasterNode(data masterData) bool {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
+
+	masterUuid := data.uuid
+
 	newMaster := false
 	_, present := mt.aliveNodes[masterUuid]
 	if present {
 		mt.aliveNodes[masterUuid].timer.Stop()
 	} else {
-		masterLog.Info("A new master has appeared! Dropping current leader.")
+		masterLog.Info("A new master has appeared!")
 		newMaster = true
 	}
 
 	killMasterNode := func() {
-		mt.deadMasterCh <- masterUuid
+		mt.deadMasterCh <- mt.aliveNodes[masterUuid]
 	}
 
-	timer := time.AfterFunc(defunctTmr, killMasterNode)
-	mt.aliveNodes[masterUuid] = masterData{masterUuid, addr, timer}
+	data.timer = time.AfterFunc(defunctTmr, killMasterNode)
+	mt.aliveNodes[masterUuid] = data
 	return newMaster
 }
 
@@ -206,6 +209,12 @@ func (mt *tracker) chooseLeader() {
 		}
 	}
 
+	mt.gotNewLeader(leader)
+}
+
+func (mt *tracker) gotNewLeader(leader masterData) {
+	masterLog.Info("Joining an already existing cluster")
+
 	*mt.leaderUuid = leader.uuid
 	masterLog.Info("We all hail the new leader: " + leader.uuid)
 	if leader.uuid == myUuid.String() {
@@ -227,13 +236,16 @@ func (mt *tracker) eventLoop() {
 	for {
 		select {
 		case data := <-mt.keepAliveCh:
-			new_master := mt.trackMasterNode(data.uuid, data.addr)
+			new_master := mt.trackMasterNode(data)
 			if new_master && (len(mt.aliveNodes) < mt.clusterSize) {
 				mt.resetAnarchyTimer()
+			} else if data.state == LEADER {
+				mt.gotNewLeader(data)
 			}
 		case corpse := <-mt.deadMasterCh:
-			mt.killDeadMaster(corpse)
-			if len(mt.aliveNodes) < mt.clusterSize {
+			wasLeader := corpse.uuid == *mt.leaderUuid
+			mt.killDeadMaster(corpse.uuid)
+			if len(mt.aliveNodes) < mt.clusterSize || wasLeader {
 				mt.resetAnarchyTimer()
 			}
 		case <-mt.anarchyTmr.C:

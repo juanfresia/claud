@@ -8,7 +8,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-const produceLogs = true
+const produceLogs = false
 
 // ------------------------ Log Type definition- ----------------------
 
