@@ -110,6 +110,7 @@ func registerEventPayloads() {
 	gob.Register(map[string]masterResourcesData{})
 	gob.Register(jobData{})
 	gob.Register(masterResourcesData{})
+	gob.Register(KeepAliveMessage{})
 }
 
 // connectWithFollowers makes the leader wait for all followers

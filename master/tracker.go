@@ -1,6 +1,8 @@
 package master
 
 import (
+	"bytes"
+	"encoding/gob"
 	"net"
 	"strings"
 	"sync"
@@ -33,6 +35,11 @@ func (ms masterState) String() string {
 		"IN ANARCHY",
 	}
 	return strMap[ms]
+}
+
+type KeepAliveMessage struct {
+	Uuid  string
+	State masterState
 }
 
 // masterData stores the UUID, UDP address and defunct timer of
@@ -92,10 +99,15 @@ func (mt *tracker) keepAliveSender(multicastAddr string) {
 		masterLog.Error("UDP socket creation failed: " + err.Error())
 	}
 	c, err := net.DialUDP("udp", nil, addr)
-	msg := myUuid.String()
+	msg := KeepAliveMessage{myUuid.String(), *mt.state}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
+		masterLog.Error("gob encoidng failed for keepalive message: " + err.Error())
+	}
+
 	// TODO: change this for a ticker (to be able to gracefully quit)
 	for {
-		c.Write([]byte(msg))
+		c.Write(buf.Bytes())
 		time.Sleep(keepAliveTmr)
 	}
 }
@@ -112,13 +124,19 @@ func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 	l.SetReadBuffer(maxDatagramSize)
 
 	// Keep listening for updates
-	msg := make([]byte, maxDatagramSize)
+	var msg KeepAliveMessage
+	buf := make([]byte, maxDatagramSize)
 	for {
-		n, src, err := l.ReadFromUDP(msg)
+		n, src, err := l.ReadFromUDP(buf)
 		if err != nil {
 			masterLog.Error("ReadFromUDP failed: " + err.Error())
+			continue
 		}
-		uuidReceived := string(msg[:n])
+		if err = gob.NewDecoder(bytes.NewReader(buf[:n])).Decode(&msg); err != nil {
+			masterLog.Error("gob decodidng failed for keepalive message: " + err.Error())
+			continue
+		}
+		uuidReceived := msg.Uuid
 		mt.keepAliveCh <- masterData{uuid: uuidReceived, addr: src}
 	}
 }
