@@ -249,10 +249,12 @@ func (mt *tracker) eventLoop() {
 				mt.resetAnarchyTimer()
 			}
 		case <-mt.anarchyTmr.C:
-			if len(mt.aliveNodes) >= mt.clusterSize {
-				mt.chooseLeader()
-			} else {
-				mt.resetAnarchyTimer()
+			if *mt.state == ANARCHY {
+				if len(mt.aliveNodes) >= mt.clusterSize {
+					mt.chooseLeader()
+				} else {
+					mt.resetAnarchyTimer()
+				}
 			}
 		}
 	}
