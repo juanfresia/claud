@@ -179,7 +179,7 @@ func (mt *tracker) trackMasterNode(data masterData) bool {
 func (mt *tracker) killDeadMaster(masterUuid string) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	masterLog.Info("WARNING: Master " + masterUuid + " has died!")
+	masterLog.Warning("Master " + masterUuid + " has died!")
 	delete(mt.aliveNodes, masterUuid)
 }
 

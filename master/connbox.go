@@ -14,7 +14,8 @@ const (
 type EventType int
 
 const (
-	EV_ACK EventType = iota
+	EV_NULL EventType = iota
+	EV_ACK
 	EV_RES_F
 	EV_RES_L
 	EV_JOB_L

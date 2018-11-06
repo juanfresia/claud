@@ -52,6 +52,11 @@ type jobData struct {
 	JobStatus      jobState
 }
 
+type connectionMessage struct {
+	MasterResources map[string]masterResourcesData
+	JobsTable       map[string]jobData
+}
+
 // masterKernel is the module that schedules and launches jobs on
 // the different masters. It uses the tracker to know whether or
 // not it should behave as the leader of all masters.
@@ -111,6 +116,7 @@ func registerEventPayloads() {
 	gob.Register(jobData{})
 	gob.Register(masterResourcesData{})
 	gob.Register(KeepAliveMessage{})
+	gob.Register(connectionMessage{})
 }
 
 // connectWithFollowers makes the leader wait for all followers
@@ -122,18 +128,24 @@ func (k *masterKernel) connectWithFollower(e Event) error {
 	// Wait until all followers are connected
 	masterLog.Info("Received resources from one master")
 
-	resources, ok := e.Payload.(masterResourcesData)
+	msg, ok := e.Payload.(connectionMessage)
 	if !ok {
 		masterLog.Error("Received something strange as master resources")
 		return errors.New("Received something strange as master resources")
 	}
 
-	k.masterResources[resources.MasterUuid.String()] = resources
+	for masterUuid, data := range msg.MasterResources {
+		k.masterResources[masterUuid] = data
+	}
+	for jobId, data := range msg.JobsTable {
+		k.jobsTable[jobId] = data
+	}
+
 	masterLog.Info("Updated master resources")
-	// Send all master resources to followers
-	masterLog.Info("Sending master resources to followers\n")
+	// Send all master resources and jobs to followers
+	masterLog.Info("Sending master resources to followers")
 	fmt.Println("Sending master resources to followers")
-	k.toConnbox <- Event{Type: EV_RES_L, Payload: k.masterResources}
+	k.toConnbox <- Event{Type: EV_RES_L, Payload: &connectionMessage{k.masterResources, k.jobsTable}}
 	return nil
 }
 
@@ -143,9 +155,17 @@ func (k *masterKernel) connectWithFollower(e Event) error {
 // connbox in passive mode.
 func (k *masterKernel) connectWithLeader() error {
 	masterLog.Info("Starting connection as follower master")
-	// First send resources to the leader
-	mf := &masterResourcesData{MasterUuid: myUuid, MemFree: k.memTotal, MemTotal: k.memTotal}
-	event := Event{Type: EV_RES_F, Payload: mf}
+	// First send own resources and jobs to the leader
+	myResources := make(map[string]masterResourcesData)
+	myResources[myUuid.String()] = k.masterResources[myUuid.String()]
+	myJobs := make(map[string]jobData)
+	for jobId, data := range k.jobsTable {
+		if data.AssignedMaster == myUuid.String() {
+			myJobs[jobId] = data
+		}
+	}
+	msg := &connectionMessage{myResources, myJobs}
+	event := Event{Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
 
 	masterLog.Info("Sent resources to leader")
@@ -319,13 +339,16 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader
-		resources, ok := e.Payload.(map[string]masterResourcesData)
+		msg, ok := e.Payload.(connectionMessage)
 		if !ok {
 			masterLog.Error("Received something strange as master resources")
 			return
 		}
-		for uuid, data := range resources {
-			k.masterResources[uuid] = data
+		for masterUuid, data := range msg.MasterResources {
+			k.masterResources[masterUuid] = data
+		}
+		for jobId, data := range msg.JobsTable {
+			k.jobsTable[jobId] = data
 		}
 		fmt.Println("Master resources updated with info from leader")
 	case EV_JOB_L:
@@ -336,7 +359,7 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 			masterLog.Error("Received something strange as job data")
 			return
 		}
-		masterLog.Info("Received new job data from leader!\n")
+		masterLog.Info("Received new job data from leader!")
 		k.updateTablesWithJob(job, true)
 		if job.AssignedMaster == myUuid.String() {
 			go k.spawnJob(&job)
