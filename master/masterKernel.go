@@ -80,10 +80,12 @@ type masterKernel struct {
 // its tracker and connbox.
 func newMasterKernel(mem uint64, mastersTotal uint) masterKernel {
 	StartupMasterLog("./master-" + myUuid.String()[:8] + ".log")
+	registerEventPayloads()
 
 	k := &masterKernel{memTotal: mem}
 	k.newLeaderCh = make(chan string, 10)
 	k.clusterSize = mastersTotal/2 + 1
+	fmt.Printf("CLUSTER SIZE: %v\n", k.clusterSize)
 	k.mt = newtracker(k.newLeaderCh, k.clusterSize)
 
 	k.masterResources = make(map[string]masterResourcesData)
@@ -96,8 +98,6 @@ func newMasterKernel(mem uint64, mastersTotal uint) masterKernel {
 
 	// Initialize own resources data
 	k.masterResources[myUuid.String()] = masterResourcesData{myUuid, mem, mem}
-
-	registerEventPayloads()
 
 	go k.eventLoop()
 	fmt.Println("Master Kernel is up!")
@@ -132,7 +132,7 @@ func (k *masterKernel) connectWithFollower(e Event) error {
 	masterLog.Info("Updated master resources")
 	// Send all master resources to followers
 	masterLog.Info("Sending master resources to followers\n")
-	fmt.Print("Sending master resources to followers")
+	fmt.Println("Sending master resources to followers")
 	k.toConnbox <- Event{Type: EV_RES_L, Payload: k.masterResources}
 	return nil
 }
@@ -327,7 +327,7 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 		for uuid, data := range resources {
 			k.masterResources[uuid] = data
 		}
-		fmt.Print("Master resources updated with info from leader\n")
+		fmt.Println("Master resources updated with info from leader")
 	case EV_JOB_L:
 		// If the job needs to be launched on my machine, then
 		// REALLY launch the job.

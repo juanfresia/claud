@@ -23,13 +23,15 @@ const (
 type masterState int
 
 const (
-	LEADER masterState = iota
+	NULL_STATE masterState = iota
+	LEADER
 	NOT_LEADER
 	ANARCHY
 )
 
 func (ms masterState) String() string {
 	strMap := [...]string{
+		"NULL STATE",
 		"LEADER",
 		"NOT LEADER",
 		"IN ANARCHY",
@@ -104,11 +106,13 @@ func (mt *tracker) keepAliveSender(multicastAddr string) {
 	// TODO: change this for a ticker (to be able to gracefully quit)
 	for {
 		msg := KeepAliveMessage{myUuid.String(), *mt.state}
+		//fmt.Printf("UUID/state when sending: %v/%v\n", msg.Uuid[:8], msg.State)
 		var buf bytes.Buffer
 		if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
-			masterLog.Error("gob encoidng failed for keepalive message: " + err.Error())
+			masterLog.Error("gob encoding failed for keepalive message: " + err.Error())
 		}
 		c.Write(buf.Bytes())
+		buf.Reset()
 		time.Sleep(keepAliveTmr)
 	}
 }
@@ -126,6 +130,7 @@ func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 
 	// Keep listening for updates
 	var msg KeepAliveMessage
+	//fmt.Printf("State just before listening: %v\n", msg.State)
 	buf := make([]byte, maxDatagramSize)
 	for {
 		n, src, err := l.ReadFromUDP(buf)
@@ -138,6 +143,7 @@ func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 			continue
 		}
 		mt.keepAliveCh <- masterData{uuid: msg.Uuid, addr: src, state: msg.State}
+		//fmt.Printf("UUID/state just after listening: %v/%v\n", msg.Uuid[:8], msg.State)
 	}
 }
 
@@ -213,8 +219,6 @@ func (mt *tracker) chooseLeader() {
 }
 
 func (mt *tracker) gotNewLeader(leader masterData) {
-	masterLog.Info("Joining an already existing cluster")
-
 	*mt.leaderUuid = leader.uuid
 	masterLog.Info("We all hail the new leader: " + leader.uuid)
 	if leader.uuid == myUuid.String() {
@@ -236,10 +240,12 @@ func (mt *tracker) eventLoop() {
 	for {
 		select {
 		case data := <-mt.keepAliveCh:
+			//fmt.Printf("UUID/state after poping from keepAliveCh: %v/%v\n", data.uuid[:8], data.state)
 			new_master := mt.trackMasterNode(data)
 			if new_master && (len(mt.aliveNodes) < mt.clusterSize) {
 				mt.resetAnarchyTimer()
-			} else if data.state == LEADER {
+			} else if (data.state == LEADER) && (*mt.state == ANARCHY) {
+				masterLog.Info("Joining an already existing cluster")
 				mt.gotNewLeader(data)
 			}
 		case corpse := <-mt.deadMasterCh:
