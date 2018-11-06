@@ -295,6 +295,11 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 // stopJob attempts to stop a job, deleting the container
 func (k *masterKernel) stopJob(jobID string) string {
 	job := k.jobsTable[jobID]
+	if job.AssignedMaster != myUuid.String() {
+		// If job aint on my machine, forward the JOBEND event
+		k.toConnbox <- Event{Type: EV_JOBEND_FF, Payload: job}
+		return jobID
+	}
 	jobFullName := job.JobName + "-" + job.JobId
 	masterLog.Info("Stopping job on this node: " + jobFullName)
 
@@ -364,13 +369,25 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 		if job.AssignedMaster == myUuid.String() {
 			go k.spawnJob(&job)
 		}
+	case EV_JOBEND_FF:
+		job, ok := e.Payload.(jobData)
+		if !ok {
+			masterLog.Error("Received something strange as job data")
+			return
+		}
+		// Only stop the job if the forwarded event was for you
+		if job.AssignedMaster == myUuid.String() {
+			k.stopJob(job.JobId)
+		}
 	case EV_JOBEND_L:
 		job, ok := e.Payload.(jobData)
 		if !ok {
 			masterLog.Error("Received something strange as job data")
 			return
 		}
-		k.updateTablesWithJob(job, false)
+		if job.AssignedMaster != myUuid.String() {
+			k.updateTablesWithJob(job, false)
+		}
 	default:
 		// Should never happen
 		masterLog.Error("Received wrong Event type!")
@@ -383,6 +400,18 @@ func (k *masterKernel) handleEventOnLeader(e Event) {
 	switch e.Type {
 	case EV_RES_F:
 		k.connectWithFollower(e)
+	case EV_JOBEND_FF:
+		job, ok := e.Payload.(jobData)
+		if !ok {
+			masterLog.Error("Received something strange as job data")
+			return
+		}
+		// Only stop the job if the forwarded event was for you
+		if job.AssignedMaster == myUuid.String() {
+			k.stopJob(job.JobId)
+		} else {
+			k.toConnbox <- e
+		}
 	case EV_JOBEND_F:
 		job, ok := e.Payload.(jobData)
 		if !ok {
@@ -391,7 +420,7 @@ func (k *masterKernel) handleEventOnLeader(e Event) {
 		}
 		e.Type = EV_JOBEND_L
 		k.toConnbox <- e
-		masterLog.Info("Job finished on this master with status: " + job.JobStatus.String())
+		masterLog.Info("Job finished on a follower master with status: " + job.JobStatus.String())
 		k.updateTablesWithJob(job, false)
 	case EV_JOB_L:
 		// Check the msgScheduler has a jobData and forward it to the follower

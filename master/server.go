@@ -113,20 +113,13 @@ func (m *MasterServer) stopJob(w http.ResponseWriter, r *http.Request) {
 
 	jobsList := m.kernel.getJobsList()
 
-	jobToKill, exists := jobsList[jobID]
+	_, exists := jobsList[jobID]
 	if !exists {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("{\"message\": \"Job " + jobID + " does not exist\"}"))
 		return
 	}
 
-	jobHostID := jobToKill.AssignedMaster
-	if jobHostID != myUuid.String() {
-		// TODO: Forward to master node where job is running
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("{\"message\": \"Not running in this host\"}"))
-		return
-	}
 	// TODO: add error checking
 	jobID = m.kernel.stopJob(jobID)
 	w.WriteHeader(http.StatusOK)

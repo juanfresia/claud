@@ -19,9 +19,10 @@ const (
 	EV_RES_F
 	EV_RES_L
 	EV_JOB_L
-	EV_JOB_F
+	EV_JOB_FF
 	EV_JOBEND_L
 	EV_JOBEND_F
+	EV_JOBEND_FF
 )
 
 type Event struct {
