@@ -52,6 +52,11 @@ type jobData struct {
 	JobStatus      jobState
 }
 
+type connectionMessage struct {
+	MasterResources map[string]masterResourcesData
+	JobsTable       map[string]jobData
+}
+
 // masterKernel is the module that schedules and launches jobs on
 // the different masters. It uses the tracker to know whether or
 // not it should behave as the leader of all masters.
@@ -61,6 +66,7 @@ type masterKernel struct {
 
 	mastersAmount   int32
 	memTotal        uint64
+	clusterSize     uint
 	masterResources map[string]masterResourcesData
 
 	// TODO: Erase the finished jobs from the table after a while?
@@ -77,12 +83,15 @@ type masterKernel struct {
 
 // newMasterKernel creates a new masterKernel together with
 // its tracker and connbox.
-func newMasterKernel(mem uint64) masterKernel {
+func newMasterKernel(mem uint64, mastersTotal uint) masterKernel {
 	StartupMasterLog("./master-" + myUuid.String()[:8] + ".log")
+	registerEventPayloads()
 
 	k := &masterKernel{memTotal: mem}
 	k.newLeaderCh = make(chan string, 10)
-	k.mt = newtracker(k.newLeaderCh)
+	k.clusterSize = mastersTotal/2 + 1
+	fmt.Printf("CLUSTER SIZE: %v\n", k.clusterSize)
+	k.mt = newtracker(k.newLeaderCh, k.clusterSize)
 
 	k.masterResources = make(map[string]masterResourcesData)
 	k.jobsTable = make(map[string]jobData)
@@ -95,8 +104,6 @@ func newMasterKernel(mem uint64) masterKernel {
 	// Initialize own resources data
 	k.masterResources[myUuid.String()] = masterResourcesData{myUuid, mem, mem}
 
-	registerEventPayloads()
-
 	go k.eventLoop()
 	fmt.Println("Master Kernel is up!")
 	return *k
@@ -108,6 +115,8 @@ func registerEventPayloads() {
 	gob.Register(map[string]masterResourcesData{})
 	gob.Register(jobData{})
 	gob.Register(masterResourcesData{})
+	gob.Register(KeepAliveMessage{})
+	gob.Register(connectionMessage{})
 }
 
 // connectWithFollowers makes the leader wait for all followers
@@ -115,37 +124,29 @@ func registerEventPayloads() {
 // all the followers resources on the masterResources table and
 // forwards all that info to all followers. Must be called after
 // opening the connbox in passive mode.
-func (k *masterKernel) connectWithFollowers() error {
-	masterLog.Info("Starting connection as leader master")
+func (k *masterKernel) connectWithFollower(e Event) error {
 	// Wait until all followers are connected
-	var mastersConnected int32 = 1 // This master's already connected
-	for {
-		select {
-		case e := <-k.fromConnbox:
-			masterLog.Info("Received resources from one master")
+	masterLog.Info("Received resources from one master")
 
-			resources, ok := e.Payload.(masterResourcesData)
-			if e.Type != EV_RES_F {
-				masterLog.Error("Received a wrong event type when connecting with followers")
-				return errors.New("Received a wrong event type when connecting with followers")
-			}
-			if !ok {
-				masterLog.Error("Received something strange as master resources")
-				return errors.New("Received something strange as master resources")
-			}
-
-			k.masterResources[resources.MasterUuid.String()] = resources
-			masterLog.Info("Updated master resources")
-			mastersConnected += 1
-			if mastersConnected == k.mastersAmount {
-				// Send all master resources to followers
-				masterLog.Info("Sending master resources to followers\n")
-				fmt.Print("Sending master resources to followers")
-				k.toConnbox <- Event{Type: EV_RES_L, Payload: k.masterResources}
-				return nil
-			}
-		}
+	msg, ok := e.Payload.(connectionMessage)
+	if !ok {
+		masterLog.Error("Received something strange as master resources")
+		return errors.New("Received something strange as master resources")
 	}
+
+	for masterUuid, data := range msg.MasterResources {
+		k.masterResources[masterUuid] = data
+	}
+	for jobId, data := range msg.JobsTable {
+		k.jobsTable[jobId] = data
+	}
+
+	masterLog.Info("Updated master resources")
+	// Send all master resources and jobs to followers
+	masterLog.Info("Sending master resources to followers")
+	fmt.Println("Sending master resources to followers")
+	k.toConnbox <- Event{Type: EV_RES_L, Payload: &connectionMessage{k.masterResources, k.jobsTable}}
+	return nil
 }
 
 // connectWithLeader makes the follower send its resources to the
@@ -154,33 +155,20 @@ func (k *masterKernel) connectWithFollowers() error {
 // connbox in passive mode.
 func (k *masterKernel) connectWithLeader() error {
 	masterLog.Info("Starting connection as follower master")
-	// First send resources to the leader
-	mf := &masterResourcesData{MasterUuid: myUuid, MemFree: k.memTotal, MemTotal: k.memTotal}
-	event := Event{Type: EV_RES_F, Payload: mf}
+	// First send own resources and jobs to the leader
+	myResources := make(map[string]masterResourcesData)
+	myResources[myUuid.String()] = k.masterResources[myUuid.String()]
+	myJobs := make(map[string]jobData)
+	for jobId, data := range k.jobsTable {
+		if data.AssignedMaster == myUuid.String() {
+			myJobs[jobId] = data
+		}
+	}
+	msg := &connectionMessage{myResources, myJobs}
+	event := Event{Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
 
 	masterLog.Info("Sent resources to leader")
-	// Wait here for ready signal from leader
-	for e := range k.fromConnbox {
-		masterLog.Info("Received leader response")
-		// Update resources with the info from leader
-		resources, ok := e.Payload.(map[string]masterResourcesData)
-		if e.Type != EV_RES_L {
-			masterLog.Error("Received a wrong event type when connecting with leader")
-			return errors.New("Received a wrong event type when connecting with leader")
-		}
-		if !ok {
-			masterLog.Error("Received something strange as leader resources")
-			return errors.New("Received something strange as leader resources")
-		}
-		for uuid, data := range resources {
-			k.masterResources[uuid] = data
-		}
-		masterLog.Info("Master resources updated with info from leader")
-		fmt.Print("Master resources updated with info from leader\n")
-		break
-	}
-
 	return nil
 }
 
@@ -191,7 +179,6 @@ func (k *masterKernel) restartConnBox(leaderIp string) {
 	k.mastersAmount = int32(len(k.getMasters()))
 	if k.mt.imLeader() {
 		go k.connbox.startPassive(leaderPort)
-		k.connectWithFollowers()
 	} else {
 		// Tricky
 		time.Sleep(learningTmr)
@@ -308,6 +295,11 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 // stopJob attempts to stop a job, deleting the container
 func (k *masterKernel) stopJob(jobID string) string {
 	job := k.jobsTable[jobID]
+	if job.AssignedMaster != myUuid.String() {
+		// If job aint on my machine, forward the JOBEND event
+		k.toConnbox <- Event{Type: EV_JOBEND_FF, Payload: job}
+		return jobID
+	}
 	jobFullName := job.JobName + "-" + job.JobId
 	masterLog.Info("Stopping job on this node: " + jobFullName)
 
@@ -352,15 +344,18 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader
-		resources, ok := e.Payload.(map[string]masterResourcesData)
+		msg, ok := e.Payload.(connectionMessage)
 		if !ok {
 			masterLog.Error("Received something strange as master resources")
 			return
 		}
-		for uuid, data := range resources {
-			k.masterResources[uuid] = data
+		for masterUuid, data := range msg.MasterResources {
+			k.masterResources[masterUuid] = data
 		}
-		fmt.Print("Master resources updated with info from leader\n")
+		for jobId, data := range msg.JobsTable {
+			k.jobsTable[jobId] = data
+		}
+		fmt.Println("Master resources updated with info from leader")
 	case EV_JOB_L:
 		// If the job needs to be launched on my machine, then
 		// REALLY launch the job.
@@ -369,10 +364,20 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 			masterLog.Error("Received something strange as job data")
 			return
 		}
-		masterLog.Info("Received new job data from leader!\n")
+		masterLog.Info("Received new job data from leader!")
 		k.updateTablesWithJob(job, true)
 		if job.AssignedMaster == myUuid.String() {
 			go k.spawnJob(&job)
+		}
+	case EV_JOBEND_FF:
+		job, ok := e.Payload.(jobData)
+		if !ok {
+			masterLog.Error("Received something strange as job data")
+			return
+		}
+		// Only stop the job if the forwarded event was for you
+		if job.AssignedMaster == myUuid.String() {
+			k.stopJob(job.JobId)
 		}
 	case EV_JOBEND_L:
 		job, ok := e.Payload.(jobData)
@@ -380,7 +385,9 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 			masterLog.Error("Received something strange as job data")
 			return
 		}
-		k.updateTablesWithJob(job, false)
+		if job.AssignedMaster != myUuid.String() {
+			k.updateTablesWithJob(job, false)
+		}
 	default:
 		// Should never happen
 		masterLog.Error("Received wrong Event type!")
@@ -391,6 +398,20 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 // in the master leader.
 func (k *masterKernel) handleEventOnLeader(e Event) {
 	switch e.Type {
+	case EV_RES_F:
+		k.connectWithFollower(e)
+	case EV_JOBEND_FF:
+		job, ok := e.Payload.(jobData)
+		if !ok {
+			masterLog.Error("Received something strange as job data")
+			return
+		}
+		// Only stop the job if the forwarded event was for you
+		if job.AssignedMaster == myUuid.String() {
+			k.stopJob(job.JobId)
+		} else {
+			k.toConnbox <- e
+		}
 	case EV_JOBEND_F:
 		job, ok := e.Payload.(jobData)
 		if !ok {
@@ -399,7 +420,7 @@ func (k *masterKernel) handleEventOnLeader(e Event) {
 		}
 		e.Type = EV_JOBEND_L
 		k.toConnbox <- e
-		masterLog.Info("Job finished on this master with status: " + job.JobStatus.String())
+		masterLog.Info("Job finished on a follower master with status: " + job.JobStatus.String())
 		k.updateTablesWithJob(job, false)
 	case EV_JOB_L:
 		// Check the msgScheduler has a jobData and forward it to the follower

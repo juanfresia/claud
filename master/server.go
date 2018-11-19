@@ -23,9 +23,9 @@ type MasterServer struct {
 
 // newMasterServer creates a new MasterServer with an already
 // initialized masterKernel.
-func newMasterServer(mem uint64) *MasterServer {
+func newMasterServer(mem uint64, clusterSize uint) *MasterServer {
 	m := &MasterServer{}
-	m.kernel = newMasterKernel(mem)
+	m.kernel = newMasterKernel(mem, clusterSize)
 	return m
 }
 
@@ -113,20 +113,13 @@ func (m *MasterServer) stopJob(w http.ResponseWriter, r *http.Request) {
 
 	jobsList := m.kernel.getJobsList()
 
-	jobToKill, exists := jobsList[jobID]
+	_, exists := jobsList[jobID]
 	if !exists {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("{\"message\": \"Job " + jobID + " does not exist\"}"))
 		return
 	}
 
-	jobHostID := jobToKill.AssignedMaster
-	if jobHostID != myUuid.String() {
-		// TODO: Forward to master node where job is running
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("{\"message\": \"Not running in this host\"}"))
-		return
-	}
 	// TODO: add error checking
 	jobID = m.kernel.stopJob(jobID)
 	w.WriteHeader(http.StatusOK)
@@ -174,9 +167,10 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 // --------------------------- Main function ---------------------------
 
 // LaunchMaster starts a master on the given IP and port.
-func LaunchMaster(masterIp, port string, mem uint64) {
+// TODO: replace these many parameters with a MasterKernelConfig struct or something like that
+func LaunchMaster(masterIp, port string, mem uint64, mastersTotal uint) {
 	myUuid = uuid.NewV4()
-	m := newMasterServer(mem)
+	m := newMasterServer(mem, mastersTotal)
 	server := mux.NewRouter()
 
 	server.HandleFunc("/", m.getMyStatus).Methods("GET")
