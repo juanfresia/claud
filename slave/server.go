@@ -81,7 +81,7 @@ func (s *SlaveServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 func (s *SlaveServer) getSlavesData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	nodeResources := s.kernel.getMastersResources()
+	nodeResources := s.kernel.getNodeResources()
 	slaveResources := make(map[string]NodeResourcesData)
 	for uuid, resourceData := range nodeResources {
 		slaveResources[uuid] = resourceData

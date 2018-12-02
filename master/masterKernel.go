@@ -220,7 +220,7 @@ func (k *masterKernel) getLeaderId() string {
 	return k.mt.GetLeaderId()
 }
 
-func (k *masterKernel) getMastersResources() map[string]NodeResourcesData {
+func (k *masterKernel) getNodeResources() map[string]NodeResourcesData {
 	return k.nodeResources
 }
 
