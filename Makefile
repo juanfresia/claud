@@ -12,13 +12,14 @@ BUILD_FLAGS += -X $(REPO)/claud/cmd.commit=$(COMMIT)
 BUILD_FLAGS += -X $(REPO)/claud/cmd.branch=$(BRANCH)
 BUILD_FLAGS := -ldflags "$(BUILD_FLAGS)" -v
 
-all:
+all: fmt
 	go build $(BUILD_FLAGS) -o $(BIN_DIR)/claud "$(REPO)/claud"
 .PHONY: all
 
 fmt:
+	echo "Scanning files with linter..."
 	go fmt ./...
-	go vet ./...
+	go vet -composites=false ./...
 .PHONY: fmt
 
 docker:

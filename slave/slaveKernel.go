@@ -52,7 +52,7 @@ func newMasterKernel(mem uint64, mastersTotal uint) masterKernel {
 	k.newLeaderCh = make(chan string, 10)
 	k.clusterSize = mastersTotal/2 + 1
 	fmt.Printf("CLUSTER SIZE: %v\n", k.clusterSize)
-	k.mt = tracker.NewTracker(k.newLeaderCh, myUuid, k.clusterSize)
+	k.mt = tracker.NewTracker(k.newLeaderCh, myUuid, k.clusterSize, false)
 
 	k.masterResources = make(map[string]NodeResourcesData)
 	k.jobsTable = make(map[string]JobData)
@@ -211,7 +211,7 @@ func (k *masterKernel) getMasters() []string {
 // getLeaderState returns a string representing the leader state
 // of this master (leader, not leader, or anarchy).
 func (k *masterKernel) getLeaderState() string {
-	return k.mt.GetLeaderState()
+	return k.mt.GetNodeState()
 }
 
 // getLeaderId retrieves the leader UUID (or a "no leader" message

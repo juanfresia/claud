@@ -19,38 +19,43 @@ const (
 	KeepAliveTmr    = 5 * time.Second
 	DefunctTmr      = 10 * time.Second
 	LearningTmr     = 20 * time.Second
+	maxNodes        = 50
 )
 
-// masterState keeps track of the leader election state.
-type masterState int
+// nodeState keeps track of the leader election state.
+type nodeState int
 
 const (
-	NULL_STATE masterState = iota
+	NULL_STATE nodeState = iota
 	LEADER
 	NOT_LEADER
 	ANARCHY
+	SLAVE
+	FREE_SLAVE
 )
 
-func (ms masterState) String() string {
+func (ms nodeState) String() string {
 	strMap := [...]string{
 		"NULL STATE",
 		"LEADER",
 		"NOT LEADER",
 		"IN ANARCHY",
+		"SLAVE",
+		"FREE SLAVE",
 	}
 	return strMap[ms]
 }
 
 type KeepAliveMessage struct {
 	Uuid  string
-	State masterState
+	State nodeState
 }
 
-// masterData stores the UUID, UDP address and defunct timer of
+// nodeData stores the UUID, UDP address and defunct timer of
 // a master node.
-type masterData struct {
+type nodeData struct {
 	uuid  string
-	state masterState
+	state nodeState
 	addr  *net.UDPAddr
 	timer *time.Timer
 }
@@ -58,16 +63,16 @@ type masterData struct {
 // Tracker goal is to keep a table of alive masters nodes for
 // choosing a leader. It reads and writes the UDP multicastAddr.
 type Tracker struct {
-	mu          *sync.Mutex
-	clusterSize int
-	aliveNodes  map[string]masterData
-	state       *masterState
-	nodeUuid uuid.UUID
-	leaderUuid  *string
-	anarchyTmr  *time.Timer
+	mu           *sync.Mutex
+	clusterSize  int
+	aliveMasters map[string]nodeData
+	state        *nodeState
+	nodeUuid     uuid.UUID
+	leaderUuid   *string
+	anarchyTmr   *time.Timer
 
-	keepAliveCh  chan masterData
-	deadMasterCh chan masterData
+	keepAliveCh  chan nodeData
+	deadMasterCh chan nodeData
 	newLeaderCh  chan<- string
 }
 
@@ -75,18 +80,24 @@ type Tracker struct {
 
 // NewTracker creates a Tracker and launches goroutines
 // for listening and writing the UDP multicast address.
-func NewTracker(newLeaderCh chan<- string, nodeUuid uuid.UUID, clusterSize uint) Tracker {
+func NewTracker(newLeaderCh chan<- string, nodeUuid uuid.UUID, clusterSize uint, isMaster bool) Tracker {
 	mt := &Tracker{newLeaderCh: newLeaderCh}
-	mt.state = new(masterState)
+	mt.state = new(nodeState)
 	mt.clusterSize = int(clusterSize)
 	mt.nodeUuid = nodeUuid
 	mt.leaderUuid = new(string)
-	*mt.state = ANARCHY
-	*mt.leaderUuid = "NO LEADER"
-	mt.aliveNodes = make(map[string]masterData)
+	if isMaster {
+		*mt.state = ANARCHY
+	} else {
+		*mt.state = FREE_SLAVE
+		logger.Logger.Info("Started node as slave!")
+	}
 
-	mt.keepAliveCh = make(chan masterData, clusterSize)
-	mt.deadMasterCh = make(chan masterData, clusterSize)
+	*mt.leaderUuid = "NO LEADER"
+	mt.aliveMasters = make(map[string]nodeData)
+
+	mt.keepAliveCh = make(chan nodeData, maxNodes)
+	mt.deadMasterCh = make(chan nodeData, maxNodes)
 
 	mt.anarchyTmr = time.NewTimer(LearningTmr)
 
@@ -146,36 +157,38 @@ func (mt *Tracker) listenMulticastUDP(multicastAddr string) {
 			logger.Logger.Error("gob decodidng failed for keepalive message: " + err.Error())
 			continue
 		}
-		mt.keepAliveCh <- masterData{uuid: msg.Uuid, addr: src, state: msg.State}
+		if (msg.State != FREE_SLAVE) && (msg.State != SLAVE) {
+			mt.keepAliveCh <- nodeData{uuid: msg.Uuid, addr: src, state: msg.State}
+		}
 		//fmt.Printf("UUID/state just after listening: %v/%v\n", msg.Uuid[:8], msg.State)
 	}
 }
 
-// trackMasterNode refreshes some master's entry in the alive master
+// trackNode refreshes some master's entry in the alive master
 // nodes table, launching a defunct timer every time. Returns true if
 // a new master has appeared (meaning a new leader election should
 // take place on the Trackers of all master nodes).
-func (mt *Tracker) trackMasterNode(data masterData) bool {
+func (mt *Tracker) trackNode(data nodeData) bool {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 
 	masterUuid := data.uuid
 
 	newMaster := false
-	_, present := mt.aliveNodes[masterUuid]
+	_, present := mt.aliveMasters[masterUuid]
 	if present {
-		mt.aliveNodes[masterUuid].timer.Stop()
+		mt.aliveMasters[masterUuid].timer.Stop()
 	} else {
 		logger.Logger.Info("A new master has appeared!")
 		newMaster = true
 	}
 
 	killMasterNode := func() {
-		mt.deadMasterCh <- mt.aliveNodes[masterUuid]
+		mt.deadMasterCh <- mt.aliveMasters[masterUuid]
 	}
 
 	data.timer = time.AfterFunc(DefunctTmr, killMasterNode)
-	mt.aliveNodes[masterUuid] = data
+	mt.aliveMasters[masterUuid] = data
 	return newMaster
 }
 
@@ -184,7 +197,7 @@ func (mt *Tracker) killDeadMaster(masterUuid string) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 	logger.Logger.Warning("Master " + masterUuid + " has died!")
-	delete(mt.aliveNodes, masterUuid)
+	delete(mt.aliveMasters, masterUuid)
 }
 
 // resetAnarchyTimer restarts the anarchyTmr of the Tracker.
@@ -194,12 +207,16 @@ func (mt *Tracker) resetAnarchyTimer() {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 	logger.Logger.Info("No leader detected, embrace ANARCHY!")
-	if *mt.state == ANARCHY {
+	if (*mt.state == ANARCHY) || (*mt.state == FREE_SLAVE) {
 		if !mt.anarchyTmr.Stop() {
 			<-mt.anarchyTmr.C
 		}
 	}
-	*mt.state = ANARCHY
+	if (*mt.state == FREE_SLAVE) || (*mt.state == SLAVE) {
+		*mt.state = FREE_SLAVE
+	} else {
+		*mt.state = ANARCHY
+	}
 	*mt.leaderUuid = "NO LEADER"
 	mt.anarchyTmr = time.NewTimer(LearningTmr)
 }
@@ -212,8 +229,13 @@ func (mt *Tracker) chooseLeader() {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 	logger.Logger.Info("ANARCHY has ended. Choosing a new leader")
-	leader := mt.aliveNodes[mt.nodeUuid.String()]
-	for _, node := range mt.aliveNodes {
+	var leader nodeData
+	for _, node := range mt.aliveMasters {
+		leader = node
+		break
+	}
+
+	for _, node := range mt.aliveMasters {
 		if node.uuid <= leader.uuid {
 			leader = node
 		}
@@ -222,12 +244,14 @@ func (mt *Tracker) chooseLeader() {
 	mt.gotNewLeader(leader)
 }
 
-func (mt *Tracker) gotNewLeader(leader masterData) {
+func (mt *Tracker) gotNewLeader(leader nodeData) {
 	*mt.leaderUuid = leader.uuid
 	logger.Logger.Info("We all hail the new leader: " + leader.uuid)
 	if leader.uuid == mt.nodeUuid.String() {
 		*mt.state = LEADER
-	} else {
+	} else if *mt.state == FREE_SLAVE {
+		*mt.state = SLAVE
+	} else if *mt.state != SLAVE {
 		*mt.state = NOT_LEADER
 	}
 	logger.Logger.Info("New leader state: " + mt.state.String())
@@ -245,22 +269,22 @@ func (mt *Tracker) eventLoop() {
 		select {
 		case data := <-mt.keepAliveCh:
 			//fmt.Printf("UUID/state after poping from keepAliveCh: %v/%v\n", data.uuid[:8], data.state)
-			new_master := mt.trackMasterNode(data)
-			if new_master && (len(mt.aliveNodes) < mt.clusterSize) {
+			new_master := mt.trackNode(data)
+			if new_master && (len(mt.aliveMasters) < mt.clusterSize) {
 				mt.resetAnarchyTimer()
-			} else if (data.state == LEADER) && (*mt.state == ANARCHY) {
+			} else if (data.state == LEADER) && ((*mt.state == ANARCHY) || (*mt.state == FREE_SLAVE)) {
 				logger.Logger.Info("Joining an already existing cluster")
 				mt.gotNewLeader(data)
 			}
 		case corpse := <-mt.deadMasterCh:
 			wasLeader := corpse.uuid == *mt.leaderUuid
 			mt.killDeadMaster(corpse.uuid)
-			if len(mt.aliveNodes) < mt.clusterSize || wasLeader {
+			if len(mt.aliveMasters) < mt.clusterSize || wasLeader {
 				mt.resetAnarchyTimer()
 			}
 		case <-mt.anarchyTmr.C:
-			if *mt.state == ANARCHY {
-				if len(mt.aliveNodes) >= mt.clusterSize {
+			if (*mt.state == ANARCHY) || (*mt.state == FREE_SLAVE) {
+				if len(mt.aliveMasters) >= mt.clusterSize {
 					mt.chooseLeader()
 				} else {
 					mt.resetAnarchyTimer()
@@ -278,18 +302,18 @@ func (mt *Tracker) eventLoop() {
 func (mt *Tracker) GetMasters() []string {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	aliveMasters := make([]string, len(mt.aliveNodes))
+	aliveMasters := make([]string, len(mt.aliveMasters))
 	i := 0
-	for uuid := range mt.aliveNodes {
+	for uuid := range mt.aliveMasters {
 		aliveMasters[i] = uuid
 		i++
 	}
 	return aliveMasters
 }
 
-// GetLeaderState returns a string representing the leader state
+// GetNodeState returns a string representing the leader state
 // of this master (leader, not leader, or anarchy).
-func (mt *Tracker) GetLeaderState() string {
+func (mt *Tracker) GetNodeState() string {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 	return mt.state.String()
