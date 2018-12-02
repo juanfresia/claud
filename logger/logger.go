@@ -12,7 +12,7 @@ const produceLogs = false
 
 // ------------------------ Log Type definition- ----------------------
 
-// MasterLog allows all master's threads to log into a logfile.
+// Log allows all master's threads to log into a logfile.
 type Log struct {
 	logFile *log.Logger
 }
@@ -22,8 +22,8 @@ var Logger *Log
 
 // --------------------------- Log Functions --------------------------
 
-// StartupMasterLog prepares the MasterLog and leaves it ready to use.
-// The given logFile path provided is used for logging if produceLogs
+// StartLog prepares the MasterLog and leaves it ready to use. The
+// given logFile path provided is used for logging if produceLogs
 // is set (otherwise, logs to stdout).
 func StartLog(logFile string) {
 	Logger = &Log{}

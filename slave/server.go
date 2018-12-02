@@ -1,6 +1,4 @@
-// Package master keeps together all the necessary stuff to launch
-// a master node of claud.
-package master
+package slave
 
 import (
 	"encoding/json"
@@ -166,9 +164,7 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 
 // --------------------------- Main function ---------------------------
 
-// LaunchMaster starts a master on the given IP and port.
-// TODO: replace these many parameters with a MasterKernelConfig struct or something like that
-func LaunchMaster(masterIp, port string, mem uint64, mastersTotal uint) {
+func LaunchSlave(slaveIp, port string, mem uint64, mastersTotal uint) {
 	myUuid = uuid.NewV4()
 	m := newMasterServer(mem, mastersTotal)
 	server := mux.NewRouter()
@@ -179,5 +175,5 @@ func LaunchMaster(masterIp, port string, mem uint64, mastersTotal uint) {
 	server.HandleFunc("/jobs", m.getJobsList).Methods("GET")
 	server.HandleFunc("/jobs", m.launchNewJob).Methods("POST")
 	server.HandleFunc("/jobs/{id}", m.stopJob).Methods("DELETE")
-	http.ListenAndServe(masterIp+":"+port, server)
+	http.ListenAndServe(slaveIp+":"+port, server)
 }
