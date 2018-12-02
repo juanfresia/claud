@@ -126,7 +126,7 @@ func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 		thisJobData["job_full_name"] = data.JobName + "-" + data.JobId
 		thisJobData["job_id"] = data.JobId
 		thisJobData["image"] = data.ImageName
-		thisJobData["asigned_master"] = data.AssignedMaster
+		thisJobData["asigned_master"] = data.AssignedNode
 		thisJobData["status"] = data.JobStatus.String()
 
 		jobsDataArray[i] = thisJobData

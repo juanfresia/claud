@@ -44,7 +44,7 @@ type slaveKernel struct {
 // newSlaveKernel creates a new slaveKernel together with
 // its Tracker and Connbox.
 func newSlaveKernel(mem uint64, mastersTotal uint) slaveKernel {
-	logger.StartLog("./master-" + myUuid.String()[:8] + ".log")
+	logger.StartLog("./slave-" + myUuid.String()[:8] + ".log")
 	registerEventPayloads()
 
 	k := &slaveKernel{memTotal: mem}
@@ -65,7 +65,7 @@ func newSlaveKernel(mem uint64, mastersTotal uint) slaveKernel {
 	k.nodeResources[myUuid.String()] = NodeResourcesData{myUuid, mem, mem}
 
 	go k.eventLoop()
-	fmt.Println("Master Kernel is up!")
+	fmt.Println("Slave Kernel is up!")
 	return *k
 }
 
@@ -85,13 +85,13 @@ func registerEventPayloads() {
 // followers is received. Must be called after opening the
 // connbox in passive mode.
 func (k *slaveKernel) connectWithLeader() error {
-	logger.Logger.Info("Starting connection as follower master")
+	logger.Logger.Info("Starting connection as follower slave")
 	// First send own resources and jobs to the leader
 	myResources := make(map[string]NodeResourcesData)
 	myResources[myUuid.String()] = k.nodeResources[myUuid.String()]
 	myJobs := make(map[string]JobData)
 	for jobId, data := range k.jobsTable {
-		if data.AssignedMaster == myUuid.String() {
+		if data.AssignedNode == myUuid.String() {
 			myJobs[jobId] = data
 		}
 	}
@@ -108,14 +108,10 @@ func (k *slaveKernel) connectWithLeader() error {
 func (k *slaveKernel) restartConnBox(leaderIp string) {
 	// TODO: Close current connbox connections via the channel
 	k.mastersAmount = int32(len(k.getMasters()))
-	if k.mt.ImLeader() {
-		go k.connbox.StartPassive(leaderPort)
-	} else {
-		// Tricky
-		time.Sleep(tracker.LearningTmr)
-		go k.connbox.StartActive(leaderIp + ":" + leaderPort)
-		k.connectWithLeader()
-	}
+
+	time.Sleep(tracker.LearningTmr)
+	go k.connbox.StartActive(leaderIp + ":" + leaderPort)
+	k.connectWithLeader()
 }
 
 // -------------------------------------------------------------------
@@ -127,7 +123,7 @@ func (k *slaveKernel) restartConnBox(leaderIp string) {
 // argument isLaunched to indicate whether the job is being
 // launched (true) or stopped (false).
 func (k *slaveKernel) updateTablesWithJob(job JobData, isLaunched bool) {
-	assignedMaster := job.AssignedMaster
+	assignedMaster := job.AssignedNode
 	assignedData := k.nodeResources[assignedMaster]
 	if isLaunched {
 		assignedData.MemFree -= job.MemUsage
@@ -154,16 +150,10 @@ func (k *slaveKernel) spawnJob(job *JobData) {
 	} else {
 		job.JobStatus = JOB_FINISHED
 	}
-	// Tell the other masters the job has finished and update the tables
-	if k.mt.ImLeader() {
-		// If this was the leader, tell the followers the job has finished
-		logger.Logger.Info("Job finished on the leader!!")
-		k.toConnbox <- Event{Type: EV_JOBEND_L, Payload: *job}
-	} else {
-		// If this was a follower, tell the leader the job has finished
-		logger.Logger.Info("Job finished on this follower master!")
-		k.toConnbox <- Event{Type: EV_JOBEND_F, Payload: *job}
-	}
+
+	logger.Logger.Info("Job finished on this follower slave!")
+	k.toConnbox <- Event{Type: EV_JOBEND_F, Payload: *job}
+
 	k.updateTablesWithJob(*job, false)
 }
 
@@ -197,19 +187,19 @@ func (k *slaveKernel) getNodeResources() map[string]NodeResourcesData {
 // and forwards an Event with Type: EV_JOB_L to all connections via
 // the k.toConnbox. It returns the JobId of the created job.
 func (k *slaveKernel) launchJob(jobName string, memUsage uint64, imageName string) string {
-	assignedMaster := ""
+	assignedNode := ""
 	for uuid, data := range k.nodeResources {
 		if data.MemFree >= memUsage {
-			assignedMaster = uuid
+			assignedNode = uuid
 			break
 		}
 	}
-	if assignedMaster == "" {
+	if assignedNode == "" {
 		return "Error, not enough resources on claud"
 	}
 
-	logger.Logger.Info("Ordering " + assignedMaster + " to launch a new job")
-	job := JobData{JobName: jobName, MemUsage: memUsage, AssignedMaster: assignedMaster}
+	logger.Logger.Info("Ordering " + assignedNode + " to launch a new job")
+	job := JobData{JobName: jobName, MemUsage: memUsage, AssignedNode: assignedNode}
 	job.ImageName = imageName
 	job.JobId = uuid.NewV4().String()
 	job.JobStatus = JOB_RUNNING
@@ -217,7 +207,7 @@ func (k *slaveKernel) launchJob(jobName string, memUsage uint64, imageName strin
 	k.toConnbox <- Event{Type: EV_JOB_L, Payload: job}
 	k.updateTablesWithJob(job, true)
 
-	if assignedMaster == myUuid.String() {
+	if assignedNode == myUuid.String() {
 		go k.spawnJob(&job)
 	}
 	return job.JobId
@@ -226,7 +216,7 @@ func (k *slaveKernel) launchJob(jobName string, memUsage uint64, imageName strin
 // stopJob attempts to stop a job, deleting the container
 func (k *slaveKernel) stopJob(jobID string) string {
 	job := k.jobsTable[jobID]
-	if job.AssignedMaster != myUuid.String() {
+	if job.AssignedNode != myUuid.String() {
 		// If job aint on my machine, forward the JOBEND event
 		k.toConnbox <- Event{Type: EV_JOBEND_FF, Payload: job}
 		return jobID
@@ -273,16 +263,16 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 		// Update resources with the info from leader
 		msg, ok := e.Payload.(ConnectionMessage)
 		if !ok {
-			logger.Logger.Error("Received something strange as master resources")
+			logger.Logger.Error("Received something strange as node resources")
 			return
 		}
-		for masterUuid, data := range msg.MasterResources {
+		for masterUuid, data := range msg.NodeResources {
 			k.nodeResources[masterUuid] = data
 		}
 		for jobId, data := range msg.JobsTable {
 			k.jobsTable[jobId] = data
 		}
-		fmt.Println("Master resources updated with info from leader")
+		fmt.Println("Resources updated with info from leader")
 	case EV_JOB_L:
 		// If the job needs to be launched on my machine, then
 		// REALLY launch the job.
@@ -293,7 +283,7 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 		}
 		logger.Logger.Info("Received new job data from leader!")
 		k.updateTablesWithJob(job, true)
-		if job.AssignedMaster == myUuid.String() {
+		if job.AssignedNode == myUuid.String() {
 			go k.spawnJob(&job)
 		}
 	case EV_JOBEND_FF:
@@ -303,7 +293,7 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 			return
 		}
 		// Only stop the job if the forwarded event was for you
-		if job.AssignedMaster == myUuid.String() {
+		if job.AssignedNode == myUuid.String() {
 			k.stopJob(job.JobId)
 		}
 	case EV_JOBEND_L:
@@ -312,7 +302,7 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 			logger.Logger.Error("Received something strange as job data")
 			return
 		}
-		if job.AssignedMaster != myUuid.String() {
+		if job.AssignedNode != myUuid.String() {
 			k.updateTablesWithJob(job, false)
 		}
 	default:

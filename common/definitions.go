@@ -52,15 +52,15 @@ func (js JobState) String() string {
 
 // JobData represents all the info of a running/to run job
 type JobData struct {
-	JobName        string
-	ImageName      string
-	MemUsage       uint64
-	AssignedMaster string
-	JobId          string
-	JobStatus      JobState
+	JobName      string
+	ImageName    string
+	MemUsage     uint64
+	AssignedNode string
+	JobId        string
+	JobStatus    JobState
 }
 
 type ConnectionMessage struct {
-	MasterResources map[string]NodeResourcesData
-	JobsTable       map[string]JobData
+	NodeResources map[string]NodeResourcesData
+	JobsTable     map[string]JobData
 }
