@@ -16,6 +16,7 @@ func init() {
 	slaveCmd.Flags().StringVarP(&slaveIp, "ip", "i", "localhost", "IP to run the slave HTTP server")
 	slaveCmd.Flags().StringVarP(&slavePort, "port", "p", "8081", "Port to run the slave HTTP server")
 	slaveCmd.Flags().Uint64VarP(&slaveMem, "memory", "m", 1024, "Memory size (in KiB) yielded to claud for running processes")
+	slaveCmd.Flags().UintVarP(&masterTotal, "masters-total", "n", 3, "Total number of masters to consider in the cluster")
 }
 
 var slaveCmd = &cobra.Command{
@@ -39,5 +40,5 @@ func slaveProcess(cmd *cobra.Command, args []string) {
 		fmt.Printf("FATAL: %v KiB of memory are not available!\n", slaveMem)
 		return
 	}
-	slave.LaunchSlave(slaveIp, slavePort, slaveMem, 2)
+	slave.LaunchSlave(slaveIp, slavePort, slaveMem, masterTotal)
 }

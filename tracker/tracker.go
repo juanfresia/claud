@@ -206,23 +206,21 @@ func (mt *Tracker) killDeadMaster(masterUuid string) {
 func (mt *Tracker) resetAnarchyTimer(lockOnStop bool) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	logger.Logger.Info("No leader detected, embrace ANARCHY!")
 	if (*mt.state == ANARCHY) || (*mt.state == FREE_SLAVE) {
 		if !mt.anarchyTmr.Stop() {
-			logger.Logger.Warning("Master is here!")
 			if lockOnStop {
 				<-mt.anarchyTmr.C
 			}
 		}
 	}
-	logger.Logger.Warning("AND now here")
 	if (*mt.state == FREE_SLAVE) || (*mt.state == SLAVE) {
+		logger.Logger.Info("Leaders are in ANARCHY! Slave is free!")
 		*mt.state = FREE_SLAVE
 	} else {
+		logger.Logger.Info("No leader detected, embrace ANARCHY!")
 		*mt.state = ANARCHY
 	}
 	*mt.leaderUuid = "NO LEADER"
-	logger.Logger.Warning("Finally here!")
 	mt.anarchyTmr = time.NewTimer(LearningTmr)
 }
 
@@ -233,7 +231,7 @@ func (mt *Tracker) resetAnarchyTimer(lockOnStop bool) {
 func (mt *Tracker) chooseLeader() {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	logger.Logger.Info("ANARCHY has ended. Choosing a new leader")
+	logger.Logger.Info("ANARCHY has ended, choosing a new leader")
 	var leader nodeData
 	for _, node := range mt.aliveMasters {
 		leader = node
@@ -259,7 +257,7 @@ func (mt *Tracker) gotNewLeader(leader nodeData) {
 	} else if *mt.state != SLAVE {
 		*mt.state = NOT_LEADER
 	}
-	logger.Logger.Info("New leader state: " + mt.state.String())
+	logger.Logger.Info("New node state: " + mt.state.String())
 	// Forward the new leader IP address back to kernel
 	leaderIP := leader.addr.String()
 	leaderIP = leaderIP[:strings.Index(leaderIP, ":")]

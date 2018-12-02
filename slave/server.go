@@ -14,21 +14,21 @@ var myUuid uuid.UUID
 
 // --------------------------- Server struct ---------------------------
 
-// MasterServer provides some nice HTTP API for the claud users.
-type MasterServer struct {
-	kernel masterKernel
+// SlaveServer provides some nice HTTP API for the claud users.
+type SlaveServer struct {
+	kernel slaveKernel
 }
 
-// newMasterServer creates a new MasterServer with an already
-// initialized masterKernel.
-func newMasterServer(mem uint64, clusterSize uint) *MasterServer {
-	m := &MasterServer{}
-	m.kernel = newMasterKernel(mem, clusterSize)
-	return m
+// newSlaveServer creates a new SlaveServer with an already
+// initialized slaveKernel.
+func newSlaveServer(mem uint64, clusterSize uint) *SlaveServer {
+	s := &SlaveServer{}
+	s.kernel = newSlaveKernel(mem, clusterSize)
+	return s
 }
 
-// getMyStatus provides info on this master's status.
-func (m *MasterServer) getMyStatus(w http.ResponseWriter, r *http.Request) {
+// getMyStatus provides info on this slave's status.
+func (s *SlaveServer) getMyStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	myStatusData := make(map[string]string)
 	myStatusData["my_UUID"] = myUuid.String()
@@ -39,23 +39,23 @@ func (m *MasterServer) getMyStatus(w http.ResponseWriter, r *http.Request) {
 
 // getLeaderStatus shows how the master leader election is going and
 // which master is the real leader.
-func (m *MasterServer) getLeaderStatus(w http.ResponseWriter, r *http.Request) {
+func (s *SlaveServer) getLeaderStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	leaderStatusData := make(map[string]string)
-	leaderStatusData["leader_status"] = m.kernel.getLeaderState()
-	leaderStatusData["leader_UUID"] = m.kernel.getLeaderId()
+	leaderStatusData["leader_status"] = s.kernel.getLeaderState()
+	leaderStatusData["leader_UUID"] = s.kernel.getLeaderId()
 	w.WriteHeader(http.StatusOK)
 	response, _ := json.Marshal(leaderStatusData)
 	w.Write(response)
 }
 
 // getAliveMasters prints a nice list of all masters in the cluster.
-func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
+func (s *SlaveServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	aliveMasters := m.kernel.getMasters()
-	masterResources := m.kernel.getMastersResources()
+	aliveMasters := s.kernel.getMasters()
+	masterResources := s.kernel.getMastersResources()
 	masterDataArray := make([]interface{}, len(aliveMasters))
 	i := 0
 	for _, uuid := range aliveMasters {
@@ -78,10 +78,10 @@ func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 }
 
 // getJobsList fetches the jobs list and returns it json formatted.
-func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
+func (s *SlaveServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	jobsList := m.kernel.getJobsList()
+	jobsList := s.kernel.getJobsList()
 	jobsDataArray := make([]interface{}, len(jobsList))
 	i := 0
 	for _, data := range jobsList {
@@ -105,11 +105,11 @@ func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 }
 
 // TODO: Somehow kill a running job
-func (m *MasterServer) stopJob(w http.ResponseWriter, r *http.Request) {
+func (s *SlaveServer) stopJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	jobID := mux.Vars(r)["id"]
 
-	jobsList := m.kernel.getJobsList()
+	jobsList := s.kernel.getJobsList()
 
 	_, exists := jobsList[jobID]
 	if !exists {
@@ -119,14 +119,14 @@ func (m *MasterServer) stopJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: add error checking
-	jobID = m.kernel.stopJob(jobID)
+	jobID = s.kernel.stopJob(jobID)
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("{\"job_id\": \"" + jobID + "\"}"))
 }
 
 // launchNewJob launches a new job based on the request body received.
 // It forwards the user a message with the job id.
-func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
+func (s *SlaveServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var newJob struct {
 		Mem   uint64
@@ -149,14 +149,14 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if m.kernel.getLeaderId() != myUuid.String() {
+	if s.kernel.getLeaderId() != myUuid.String() {
 		// TODO: Forward to master leader somehow
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte("{\"message\": \"Not the leader\"}"))
 		return
 	}
 	// TODO: refactor this to pass only one job type element
-	jobId := m.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
+	jobId := s.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("{\"job_id\": \"" + jobId + "\"}"))
@@ -166,14 +166,14 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 
 func LaunchSlave(slaveIp, port string, mem uint64, mastersTotal uint) {
 	myUuid = uuid.NewV4()
-	m := newMasterServer(mem, mastersTotal)
+	s := newSlaveServer(mem, mastersTotal)
 	server := mux.NewRouter()
 
-	server.HandleFunc("/", m.getMyStatus).Methods("GET")
-	server.HandleFunc("/masters", m.getAliveMasters).Methods("GET")
-	server.HandleFunc("/leader", m.getLeaderStatus).Methods("GET")
-	server.HandleFunc("/jobs", m.getJobsList).Methods("GET")
-	server.HandleFunc("/jobs", m.launchNewJob).Methods("POST")
-	server.HandleFunc("/jobs/{id}", m.stopJob).Methods("DELETE")
+	server.HandleFunc("/", s.getMyStatus).Methods("GET")
+	server.HandleFunc("/masters", s.getAliveMasters).Methods("GET")
+	server.HandleFunc("/leader", s.getLeaderStatus).Methods("GET")
+	server.HandleFunc("/jobs", s.getJobsList).Methods("GET")
+	server.HandleFunc("/jobs", s.launchNewJob).Methods("POST")
+	server.HandleFunc("/jobs/{id}", s.stopJob).Methods("DELETE")
 	http.ListenAndServe(slaveIp+":"+port, server)
 }
