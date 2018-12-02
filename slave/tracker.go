@@ -1,9 +1,8 @@
-package master
+package slave
 
 import (
 	"bytes"
 	"encoding/gob"
-	"github.com/juanfresia/claud/logger"
 	"net"
 	"strings"
 	"sync"
@@ -100,7 +99,7 @@ func newtracker(newLeaderCh chan<- string, clusterSize uint) tracker {
 func (mt *tracker) keepAliveSender(multicastAddr string) {
 	addr, err := net.ResolveUDPAddr("udp", multicastAddr)
 	if err != nil {
-		logger.Logger.Error("UDP socket creation failed: " + err.Error())
+		masterLog.Error("UDP socket creation failed: " + err.Error())
 	}
 	c, err := net.DialUDP("udp", nil, addr)
 
@@ -110,7 +109,7 @@ func (mt *tracker) keepAliveSender(multicastAddr string) {
 		//fmt.Printf("UUID/state when sending: %v/%v\n", msg.Uuid[:8], msg.State)
 		var buf bytes.Buffer
 		if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
-			logger.Logger.Error("gob encoding failed for keepalive message: " + err.Error())
+			masterLog.Error("gob encoding failed for keepalive message: " + err.Error())
 		}
 		c.Write(buf.Bytes())
 		buf.Reset()
@@ -124,7 +123,7 @@ func (mt *tracker) keepAliveSender(multicastAddr string) {
 func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 	addr, err := net.ResolveUDPAddr("udp", multicastAddr)
 	if err != nil {
-		logger.Logger.Error("UDP socket creation failed: " + err.Error())
+		masterLog.Error("UDP socket creation failed: " + err.Error())
 	}
 	l, err := net.ListenMulticastUDP("udp", nil, addr)
 	l.SetReadBuffer(maxDatagramSize)
@@ -136,11 +135,11 @@ func (mt *tracker) listenMulticastUDP(multicastAddr string) {
 	for {
 		n, src, err := l.ReadFromUDP(buf)
 		if err != nil {
-			logger.Logger.Error("ReadFromUDP failed: " + err.Error())
+			masterLog.Error("ReadFromUDP failed: " + err.Error())
 			continue
 		}
 		if err = gob.NewDecoder(bytes.NewReader(buf[:n])).Decode(&msg); err != nil {
-			logger.Logger.Error("gob decodidng failed for keepalive message: " + err.Error())
+			masterLog.Error("gob decodidng failed for keepalive message: " + err.Error())
 			continue
 		}
 		mt.keepAliveCh <- masterData{uuid: msg.Uuid, addr: src, state: msg.State}
@@ -163,7 +162,7 @@ func (mt *tracker) trackMasterNode(data masterData) bool {
 	if present {
 		mt.aliveNodes[masterUuid].timer.Stop()
 	} else {
-		logger.Logger.Info("A new master has appeared!")
+		masterLog.Info("A new master has appeared!")
 		newMaster = true
 	}
 
@@ -180,7 +179,7 @@ func (mt *tracker) trackMasterNode(data masterData) bool {
 func (mt *tracker) killDeadMaster(masterUuid string) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	logger.Logger.Warning("Master " + masterUuid + " has died!")
+	masterLog.Warning("Master " + masterUuid + " has died!")
 	delete(mt.aliveNodes, masterUuid)
 }
 
@@ -190,7 +189,7 @@ func (mt *tracker) killDeadMaster(masterUuid string) {
 func (mt *tracker) resetAnarchyTimer() {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	logger.Logger.Info("No leader detected, embrace ANARCHY!")
+	masterLog.Info("No leader detected, embrace ANARCHY!")
 	if *mt.state == ANARCHY {
 		if !mt.anarchyTmr.Stop() {
 			<-mt.anarchyTmr.C
@@ -208,7 +207,7 @@ func (mt *tracker) resetAnarchyTimer() {
 func (mt *tracker) chooseLeader() {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	logger.Logger.Info("ANARCHY has ended. Choosing a new leader")
+	masterLog.Info("ANARCHY has ended. Choosing a new leader")
 	leader := mt.aliveNodes[myUuid.String()]
 	for _, node := range mt.aliveNodes {
 		if node.uuid <= leader.uuid {
@@ -221,13 +220,13 @@ func (mt *tracker) chooseLeader() {
 
 func (mt *tracker) gotNewLeader(leader masterData) {
 	*mt.leaderUuid = leader.uuid
-	logger.Logger.Info("We all hail the new leader: " + leader.uuid)
+	masterLog.Info("We all hail the new leader: " + leader.uuid)
 	if leader.uuid == myUuid.String() {
 		*mt.state = LEADER
 	} else {
 		*mt.state = NOT_LEADER
 	}
-	logger.Logger.Info("New leader state: " + mt.state.String())
+	masterLog.Info("New leader state: " + mt.state.String())
 	// Forward the new leader IP address back to kernel
 	leaderIP := leader.addr.String()
 	leaderIP = leaderIP[:strings.Index(leaderIP, ":")]
@@ -246,7 +245,7 @@ func (mt *tracker) eventLoop() {
 			if new_master && (len(mt.aliveNodes) < mt.clusterSize) {
 				mt.resetAnarchyTimer()
 			} else if (data.state == LEADER) && (*mt.state == ANARCHY) {
-				logger.Logger.Info("Joining an already existing cluster")
+				masterLog.Info("Joining an already existing cluster")
 				mt.gotNewLeader(data)
 			}
 		case corpse := <-mt.deadMasterCh:

@@ -1,17 +1,18 @@
-package master
+package connbox
 
 import (
 	"encoding/gob"
+	"github.com/juanfresia/claud/logger"
 	"io"
 	"net"
 )
 
 type Socket struct {
 	ip          string
-	toConnbox   chan<- Event
-	fromConnbox chan Event
+	toConnbox   chan<- Message
+	fromConnbox chan Message
 
-	fromSocket chan Event
+	fromSocket chan Message
 
 	enc *gob.Encoder
 	dec *gob.Decoder
@@ -25,7 +26,7 @@ func newSocket(conn net.Conn) *Socket {
 	sock.enc = enc
 	sock.dec = dec
 
-	sock.fromSocket = make(chan Event, 10)
+	sock.fromSocket = make(chan Message, 10)
 
 	return sock
 }
@@ -35,15 +36,15 @@ func (s *Socket) launch() {
 	go s.eventLoop()
 }
 
-func (s *Socket) send(event Event) {
+func (s *Socket) send(event Message) {
 	err := s.enc.Encode(event)
 	if err != nil {
-		masterLog.Error("Error on Socket sending message: " + err.Error())
+		logger.Logger.Error("Error on Socket sending message: " + err.Error())
 	}
 }
 
 func (s *Socket) receiveLoop() {
-	var event Event
+	var event Message
 	var err error
 	for {
 		// Receive
@@ -54,7 +55,7 @@ func (s *Socket) receiveLoop() {
 				// Exit
 				break
 			}
-			masterLog.Error("Error on Socket receiving message: " + err.Error())
+			logger.Logger.Error("Error on Socket receiving message: " + err.Error())
 		} else {
 			s.fromSocket <- event
 		}

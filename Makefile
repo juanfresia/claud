@@ -12,7 +12,7 @@ BUILD_FLAGS += -X $(REPO)/claud/cmd.commit=$(COMMIT)
 BUILD_FLAGS += -X $(REPO)/claud/cmd.branch=$(BRANCH)
 BUILD_FLAGS := -ldflags "$(BUILD_FLAGS)" -v
 
-all: fmt
+all:
 	go build $(BUILD_FLAGS) -o $(BIN_DIR)/claud "$(REPO)/claud"
 .PHONY: all
 
