@@ -102,7 +102,7 @@ func (m *MasterServer) getSlavesData(w http.ResponseWriter, r *http.Request) {
 		thisNodeData["UUID"] = uuid
 		thisNodeData["free_memory"] = resourceData.MemFree
 		thisNodeData["total_memory"] = resourceData.MemTotal
-		slaveDataArray[i] = slaveDataArray
+		slaveDataArray[i] = thisNodeData
 		i += 1
 	}
 
