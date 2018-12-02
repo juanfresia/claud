@@ -16,9 +16,9 @@ import (
 const (
 	multicastAddr   = "224.0.0.28:1504"
 	maxDatagramSize = 8192
-	KeepAliveTmr    = 5 * time.Second
-	DefunctTmr      = 10 * time.Second
-	LearningTmr     = 20 * time.Second
+	KeepAliveTmr    = 4 * time.Second
+	DefunctTmr      = 8 * time.Second
+	LearningTmr     = 16 * time.Second
 	maxNodes        = 50
 )
 
@@ -203,21 +203,26 @@ func (mt *Tracker) killDeadMaster(masterUuid string) {
 // resetAnarchyTimer restarts the anarchyTmr of the Tracker.
 // This function should only be called in the main Tracker
 // main thread to prevent race conditions.
-func (mt *Tracker) resetAnarchyTimer() {
+func (mt *Tracker) resetAnarchyTimer(lockOnStop bool) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
 	logger.Logger.Info("No leader detected, embrace ANARCHY!")
 	if (*mt.state == ANARCHY) || (*mt.state == FREE_SLAVE) {
 		if !mt.anarchyTmr.Stop() {
-			<-mt.anarchyTmr.C
+			logger.Logger.Warning("Master is here!")
+			if lockOnStop {
+				<-mt.anarchyTmr.C
+			}
 		}
 	}
+	logger.Logger.Warning("AND now here")
 	if (*mt.state == FREE_SLAVE) || (*mt.state == SLAVE) {
 		*mt.state = FREE_SLAVE
 	} else {
 		*mt.state = ANARCHY
 	}
 	*mt.leaderUuid = "NO LEADER"
+	logger.Logger.Warning("Finally here!")
 	mt.anarchyTmr = time.NewTimer(LearningTmr)
 }
 
@@ -271,7 +276,7 @@ func (mt *Tracker) eventLoop() {
 			//fmt.Printf("UUID/state after poping from keepAliveCh: %v/%v\n", data.uuid[:8], data.state)
 			new_master := mt.trackNode(data)
 			if new_master && (len(mt.aliveMasters) < mt.clusterSize) {
-				mt.resetAnarchyTimer()
+				mt.resetAnarchyTimer(true)
 			} else if (data.state == LEADER) && ((*mt.state == ANARCHY) || (*mt.state == FREE_SLAVE)) {
 				logger.Logger.Info("Joining an already existing cluster")
 				mt.gotNewLeader(data)
@@ -280,14 +285,14 @@ func (mt *Tracker) eventLoop() {
 			wasLeader := corpse.uuid == *mt.leaderUuid
 			mt.killDeadMaster(corpse.uuid)
 			if len(mt.aliveMasters) < mt.clusterSize || wasLeader {
-				mt.resetAnarchyTimer()
+				mt.resetAnarchyTimer(true)
 			}
 		case <-mt.anarchyTmr.C:
 			if (*mt.state == ANARCHY) || (*mt.state == FREE_SLAVE) {
 				if len(mt.aliveMasters) >= mt.clusterSize {
 					mt.chooseLeader()
 				} else {
-					mt.resetAnarchyTimer()
+					mt.resetAnarchyTimer(false)
 				}
 			}
 		}
