@@ -46,7 +46,7 @@ func (m *MasterServer) getLeaderStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	leaderStatusData := make(map[string]string)
-	leaderStatusData["leader_status"] = m.kernel.getLeaderState()
+	leaderStatusData["leader_status"] = m.kernel.getNodeState()
 	leaderStatusData["leader_UUID"] = m.kernel.getLeaderId()
 	w.WriteHeader(http.StatusOK)
 	response, _ := json.Marshal(leaderStatusData)

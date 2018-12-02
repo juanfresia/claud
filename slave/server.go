@@ -2,11 +2,9 @@ package slave
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/gorilla/mux"
 	. "github.com/juanfresia/claud/common"
 	"github.com/satori/go.uuid"
-	"io/ioutil"
 	"net/http"
 )
 
@@ -44,7 +42,7 @@ func (s *SlaveServer) getLeaderStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	leaderStatusData := make(map[string]string)
-	leaderStatusData["leader_status"] = s.kernel.getLeaderState()
+	leaderStatusData["leader_status"] = s.kernel.getNodeState()
 	leaderStatusData["leader_UUID"] = s.kernel.getLeaderId()
 	w.WriteHeader(http.StatusOK)
 	response, _ := json.Marshal(leaderStatusData)
@@ -159,44 +157,6 @@ func (s *SlaveServer) stopJob(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("{\"job_id\": \"" + jobID + "\"}"))
 }
 
-// launchNewJob launches a new job based on the request body received.
-// It forwards the user a message with the job id.
-func (s *SlaveServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	var newJob struct {
-		Mem   uint64
-		Name  string
-		Image string
-	}
-	body, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		fmt.Printf("%v", err.Error())
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("{\"message\": \"Bad arguments received\"}"))
-		return
-	}
-
-	err = json.Unmarshal(body, &newJob)
-	if err != nil {
-		fmt.Printf("%v", err.Error())
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte("{\"message\": \"Bad arguments received\"}"))
-		return
-	}
-
-	if s.kernel.getLeaderId() != myUuid.String() {
-		// TODO: Forward to master leader somehow
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("{\"message\": \"Not the leader\"}"))
-		return
-	}
-	// TODO: refactor this to pass only one job type element
-	jobId := s.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
-
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("{\"job_id\": \"" + jobId + "\"}"))
-}
-
 // --------------------------- Main function ---------------------------
 
 func LaunchSlave(slaveIp, port string, mem uint64, mastersTotal uint) {
@@ -209,7 +169,6 @@ func LaunchSlave(slaveIp, port string, mem uint64, mastersTotal uint) {
 	server.HandleFunc("/slaves", s.getSlavesData).Methods("GET")
 	server.HandleFunc("/leader", s.getLeaderStatus).Methods("GET")
 	server.HandleFunc("/jobs", s.getJobsList).Methods("GET")
-	server.HandleFunc("/jobs", s.launchNewJob).Methods("POST")
 	server.HandleFunc("/jobs/{id}", s.stopJob).Methods("DELETE")
 	http.ListenAndServe(slaveIp+":"+port, server)
 }

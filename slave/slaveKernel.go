@@ -25,10 +25,10 @@ type slaveKernel struct {
 	mt          tracker.Tracker
 	newLeaderCh chan string
 
-	mastersAmount   int32
-	memTotal        uint64
-	clusterSize     uint
-	masterResources map[string]NodeResourcesData
+	mastersAmount int32
+	memTotal      uint64
+	clusterSize   uint
+	nodeResources map[string]NodeResourcesData
 
 	// TODO: Erase the finished jobs from the table after a while?
 	jobsTable map[string]JobData
@@ -54,7 +54,7 @@ func newSlaveKernel(mem uint64, mastersTotal uint) slaveKernel {
 	fmt.Printf("CLUSTER SIZE: %v\n", k.clusterSize)
 	k.mt = tracker.NewTracker(k.newLeaderCh, myUuid, k.clusterSize, false)
 
-	k.masterResources = make(map[string]NodeResourcesData)
+	k.nodeResources = make(map[string]NodeResourcesData)
 	k.jobsTable = make(map[string]JobData)
 
 	// Create buffered channels with ConnBox
@@ -63,7 +63,7 @@ func newSlaveKernel(mem uint64, mastersTotal uint) slaveKernel {
 	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox)
 
 	// Initialize own resources data
-	k.masterResources[myUuid.String()] = NodeResourcesData{myUuid, mem, mem}
+	k.nodeResources[myUuid.String()] = NodeResourcesData{myUuid, mem, mem}
 
 	go k.eventLoop()
 	fmt.Println("Master Kernel is up!")
@@ -83,7 +83,7 @@ func registerEventPayloads() {
 
 // connectWithFollowers makes the leader wait for all followers
 // to make contact sending their resources. The function gathers
-// all the followers resources on the masterResources table and
+// all the followers resources on the nodeResources table and
 // forwards all that info to all followers. Must be called after
 // opening the connbox in passive mode.
 func (k *slaveKernel) connectWithFollower(e Event) error {
@@ -97,7 +97,7 @@ func (k *slaveKernel) connectWithFollower(e Event) error {
 	}
 
 	for masterUuid, data := range msg.MasterResources {
-		k.masterResources[masterUuid] = data
+		k.nodeResources[masterUuid] = data
 	}
 	for jobId, data := range msg.JobsTable {
 		k.jobsTable[jobId] = data
@@ -107,7 +107,7 @@ func (k *slaveKernel) connectWithFollower(e Event) error {
 	// Send all master resources and jobs to followers
 	logger.Logger.Info("Sending master resources to followers")
 	fmt.Println("Sending master resources to followers")
-	k.toConnbox <- Event{Type: EV_RES_L, Payload: &ConnectionMessage{k.masterResources, k.jobsTable}}
+	k.toConnbox <- Event{Type: EV_RES_L, Payload: &ConnectionMessage{k.nodeResources, k.jobsTable}}
 	return nil
 }
 
@@ -119,7 +119,7 @@ func (k *slaveKernel) connectWithLeader() error {
 	logger.Logger.Info("Starting connection as follower master")
 	// First send own resources and jobs to the leader
 	myResources := make(map[string]NodeResourcesData)
-	myResources[myUuid.String()] = k.masterResources[myUuid.String()]
+	myResources[myUuid.String()] = k.nodeResources[myUuid.String()]
 	myJobs := make(map[string]JobData)
 	for jobId, data := range k.jobsTable {
 		if data.AssignedMaster == myUuid.String() {
@@ -153,19 +153,19 @@ func (k *slaveKernel) restartConnBox(leaderIp string) {
 //                       Job specific Functions
 // -------------------------------------------------------------------
 
-// updateTablesWithJob updates the masterResources table and the
+// updateTablesWithJob updates the nodeResources table and the
 // jobsTable with the info on the received JobData. Use the extra
 // argument isLaunched to indicate whether the job is being
 // launched (true) or stopped (false).
 func (k *slaveKernel) updateTablesWithJob(job JobData, isLaunched bool) {
 	assignedMaster := job.AssignedMaster
-	assignedData := k.masterResources[assignedMaster]
+	assignedData := k.nodeResources[assignedMaster]
 	if isLaunched {
 		assignedData.MemFree -= job.MemUsage
 	} else {
 		assignedData.MemFree += job.MemUsage
 	}
-	k.masterResources[assignedMaster] = assignedData
+	k.nodeResources[assignedMaster] = assignedData
 	k.jobsTable[job.JobId] = job
 }
 
@@ -208,9 +208,9 @@ func (k *slaveKernel) getMasters() []string {
 	return k.mt.GetMasters()
 }
 
-// getLeaderState returns a string representing the leader state
+// getNodeState returns a string representing the leader state
 // of this master (leader, not leader, or anarchy).
-func (k *slaveKernel) getLeaderState() string {
+func (k *slaveKernel) getNodeState() string {
 	return k.mt.GetNodeState()
 }
 
@@ -221,7 +221,7 @@ func (k *slaveKernel) getLeaderId() string {
 }
 
 func (k *slaveKernel) getMastersResources() map[string]NodeResourcesData {
-	return k.masterResources
+	return k.nodeResources
 }
 
 // launchJob selects a node with enough resources for launching the job,
@@ -229,7 +229,7 @@ func (k *slaveKernel) getMastersResources() map[string]NodeResourcesData {
 // the k.toConnbox. It returns the JobId of the created job.
 func (k *slaveKernel) launchJob(jobName string, memUsage uint64, imageName string) string {
 	assignedMaster := ""
-	for uuid, data := range k.masterResources {
+	for uuid, data := range k.nodeResources {
 		if data.MemFree >= memUsage {
 			assignedMaster = uuid
 			break
@@ -312,7 +312,7 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 			return
 		}
 		for masterUuid, data := range msg.MasterResources {
-			k.masterResources[masterUuid] = data
+			k.nodeResources[masterUuid] = data
 		}
 		for jobId, data := range msg.JobsTable {
 			k.jobsTable[jobId] = data
