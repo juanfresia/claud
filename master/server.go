@@ -181,3 +181,17 @@ func LaunchMaster(masterIp, port string, mem uint64, mastersTotal uint) {
 	server.HandleFunc("/jobs/{id}", m.stopJob).Methods("DELETE")
 	http.ListenAndServe(masterIp+":"+port, server)
 }
+
+func LaunchSlave(masterIp, port string, mem uint64, mastersTotal uint) {
+	myUuid = uuid.NewV4()
+	m := newMasterServer(mem, mastersTotal)
+	server := mux.NewRouter()
+
+	server.HandleFunc("/", m.getMyStatus).Methods("GET")
+	server.HandleFunc("/masters", m.getAliveMasters).Methods("GET")
+	server.HandleFunc("/leader", m.getLeaderStatus).Methods("GET")
+	server.HandleFunc("/jobs", m.getJobsList).Methods("GET")
+	server.HandleFunc("/jobs", m.launchNewJob).Methods("POST")
+	server.HandleFunc("/jobs/{id}", m.stopJob).Methods("DELETE")
+	http.ListenAndServe(masterIp+":"+port, server)
+}

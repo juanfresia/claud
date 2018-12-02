@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 	linuxproc "github.com/c9s/goprocinfo/linux"
-	"github.com/juanfresia/claud/slave"
+	"github.com/juanfresia/claud/master"
 	"github.com/spf13/cobra"
 )
 
@@ -39,5 +39,5 @@ func slaveProcess(cmd *cobra.Command, args []string) {
 		fmt.Printf("FATAL: %v KiB of memory are not available!\n", slaveMem)
 		return
 	}
-	slave.LaunchSlave(slaveIp, slavePort, slaveMem, 2)
+	master.LaunchSlave(slaveIp, slavePort, slaveMem, 2)
 }
