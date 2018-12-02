@@ -123,14 +123,14 @@ func (k *slaveKernel) restartConnBox(leaderIp string) {
 // argument isLaunched to indicate whether the job is being
 // launched (true) or stopped (false).
 func (k *slaveKernel) updateTablesWithJob(job JobData, isLaunched bool) {
-	assignedMaster := job.AssignedNode
-	assignedData := k.nodeResources[assignedMaster]
+	assignedNode := job.AssignedNode
+	assignedData := k.nodeResources[assignedNode]
 	if isLaunched {
 		assignedData.MemFree -= job.MemUsage
 	} else {
 		assignedData.MemFree += job.MemUsage
 	}
-	k.nodeResources[assignedMaster] = assignedData
+	k.nodeResources[assignedNode] = assignedData
 	k.jobsTable[job.JobId] = job
 }
 

@@ -27,9 +27,9 @@ type Event struct {
 
 // NodeResourcesData represents the resources of a master node
 type NodeResourcesData struct {
-	MasterUuid uuid.UUID
-	MemFree    uint64
-	MemTotal   uint64
+	NodeUuid uuid.UUID
+	MemFree  uint64
+	MemTotal uint64
 }
 
 // JobState tracks the state of a running job.
