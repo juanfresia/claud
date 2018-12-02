@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	. "github.com/juanfresia/claud/common"
 	"github.com/satori/go.uuid"
 	"io/ioutil"
 	"net/http"
@@ -55,15 +56,16 @@ func (s *SlaveServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	aliveMasters := s.kernel.getMasters()
-	masterResources := s.kernel.getMastersResources()
 	masterDataArray := make([]interface{}, len(aliveMasters))
+	leaderId := s.kernel.getLeaderId()
 	i := 0
 	for _, uuid := range aliveMasters {
 		thisMasterData := make(map[string]interface{})
 		thisMasterData["UUID"] = uuid
-		if resourceData, present := masterResources[uuid]; present {
-			thisMasterData["free_memory"] = resourceData.MemFree
-			thisMasterData["total_memory"] = resourceData.MemTotal
+		if uuid == leaderId {
+			thisMasterData["status"] = "LEADER"
+		} else {
+			thisMasterData["status"] = "NOT LEADER"
 		}
 		masterDataArray[i] = thisMasterData
 		i += 1
@@ -73,6 +75,39 @@ func (s *SlaveServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	aliveMastersResponse["alive_masters"] = masterDataArray
 
 	response, _ := json.Marshal(aliveMastersResponse)
+	w.WriteHeader(http.StatusOK)
+	w.Write(response)
+}
+
+// getAliveMasters prints a nice list of all masters in the cluster.
+func (s *SlaveServer) getSlavesData(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	nodeResources := s.kernel.getMastersResources()
+	slaveResources := make(map[string]NodeResourcesData)
+	for uuid, resourceData := range nodeResources {
+		slaveResources[uuid] = resourceData
+	}
+	// Skip nodes that are masters <- Leave or not?
+	/*  aliveMasters := s.kernel.getMasters()
+	for _, uuid := range aliveMasters {
+		delete(slaveResources, uuid)
+	}*/
+	slaveDataArray := make([]interface{}, len(slaveResources))
+	i := 0
+	for uuid, resourceData := range slaveResources {
+		thisNodeData := make(map[string]interface{})
+		thisNodeData["UUID"] = uuid
+		thisNodeData["free_memory"] = resourceData.MemFree
+		thisNodeData["total_memory"] = resourceData.MemTotal
+		slaveDataArray[i] = thisNodeData
+		i += 1
+	}
+
+	slavesDataResponse := make(map[string]interface{})
+	slavesDataResponse["alive_slaves"] = slaveDataArray
+
+	response, _ := json.Marshal(slavesDataResponse)
 	w.WriteHeader(http.StatusOK)
 	w.Write(response)
 }
@@ -171,6 +206,7 @@ func LaunchSlave(slaveIp, port string, mem uint64, mastersTotal uint) {
 
 	server.HandleFunc("/", s.getMyStatus).Methods("GET")
 	server.HandleFunc("/masters", s.getAliveMasters).Methods("GET")
+	server.HandleFunc("/slaves", s.getSlavesData).Methods("GET")
 	server.HandleFunc("/leader", s.getLeaderStatus).Methods("GET")
 	server.HandleFunc("/jobs", s.getJobsList).Methods("GET")
 	server.HandleFunc("/jobs", s.launchNewJob).Methods("POST")
