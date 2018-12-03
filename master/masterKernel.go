@@ -9,7 +9,6 @@ import (
 	"github.com/juanfresia/claud/tracker"
 	"github.com/satori/go.uuid"
 	"os/exec"
-	"strconv"
 	"time"
 )
 
@@ -87,12 +86,12 @@ func registerEventPayloads() {
 // opening the connbox in passive mode.
 func (k *masterKernel) connectWithFollower(e Event) error {
 	// Wait until all followers are connected
-	logger.Logger.Info("Received resources from one node")
+	logger.Logger.Info("Received data from one node")
 
 	msg, ok := e.Payload.(ConnectionMessage)
 	if !ok {
-		logger.Logger.Error("Received something strange as node resources")
-		return errors.New("Received something strange as node resources")
+		logger.Logger.Error("Received something strange as node data")
+		return errors.New("Received something strange as node data")
 	}
 
 	for masterUuid, data := range msg.NodeResources {
@@ -102,10 +101,10 @@ func (k *masterKernel) connectWithFollower(e Event) error {
 		k.jobsTable[jobId] = data
 	}
 
-	logger.Logger.Info("Updated node resources")
+	logger.Logger.Info("Updated node data")
 	// Send all master resources and jobs to followers
-	logger.Logger.Info("Sending resources to follower nodes")
-	//fmt.Println("Sending resources to follower nodes")
+	logger.Logger.Info("Sending all data to follower nodes")
+	//fmt.Println("Sending all data to follower nodes")
 	k.toConnbox <- Event{Type: EV_RES_L, Payload: &ConnectionMessage{k.nodeResources, k.jobsTable}}
 	return nil
 }
@@ -129,7 +128,7 @@ func (k *masterKernel) connectWithLeader() error {
 	event := Event{Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
 
-	logger.Logger.Info("Sent resources to leader")
+	logger.Logger.Info("Sent data to leader")
 	return nil
 }
 
@@ -166,35 +165,6 @@ func (k *masterKernel) updateTablesWithJob(job JobData, isLaunched bool) {
 	}
 	k.nodeResources[assignedNode] = assignedData
 	k.jobsTable[job.JobId] = job
-}
-
-// spawnJob launches a new job on this node using the given
-// JobData. After the job is finished, it forwards an event to
-// the connbox and updates the tables.
-func (k *masterKernel) spawnJob(job *JobData) {
-	logger.Logger.Info("Launching job on this node: " + job.JobName)
-	jobFullName := job.JobName + "-" + job.JobId
-	cmd := "sudo docker run --rm -m " + strconv.FormatUint(job.MemUsage, 10) + "m --name " + jobFullName + " " + job.ImageName
-	fmt.Printf("%v\n", cmd)
-	jobCmd := exec.Command("/bin/bash", "-c", cmd)
-	err := jobCmd.Run()
-	if err != nil {
-		logger.Logger.Error("Couldn't successfully execute " + job.JobName + ":" + err.Error())
-		job.JobStatus = JOB_FAILED
-	} else {
-		job.JobStatus = JOB_FINISHED
-	}
-	// Tell the other masters the job has finished and update the tables
-	if k.mt.ImLeader() {
-		// If this was the leader, tell the followers the job has finished
-		logger.Logger.Info("Job finished on the leader!!")
-		k.toConnbox <- Event{Type: EV_JOBEND_L, Payload: *job}
-	} else {
-		// If this was a follower, tell the leader the job has finished
-		logger.Logger.Info("Job finished on this follower master!")
-		k.toConnbox <- Event{Type: EV_JOBEND_F, Payload: *job}
-	}
-	k.updateTablesWithJob(*job, false)
 }
 
 // --------------------- Functions for the server --------------------
@@ -247,9 +217,6 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 	k.toConnbox <- Event{Type: EV_JOB_L, Payload: job}
 	k.updateTablesWithJob(job, true)
 
-	if assignedNode == myUuid.String() {
-		go k.spawnJob(&job)
-	}
 	return job.JobId
 }
 
@@ -307,7 +274,7 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 		// Update resources with the info from leader
 		msg, ok := e.Payload.(ConnectionMessage)
 		if !ok {
-			logger.Logger.Error("Received something strange as master resources")
+			logger.Logger.Error("Received something strange as master data")
 			return
 		}
 		for masterUuid, data := range msg.NodeResources {
@@ -316,7 +283,7 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 		for jobId, data := range msg.JobsTable {
 			k.jobsTable[jobId] = data
 		}
-		fmt.Println("Master resources updated with info from leader")
+		fmt.Println("Master data updated with info from leader")
 	case EV_JOB_L:
 		// If the job needs to be launched on my machine, then
 		// REALLY launch the job.
@@ -327,9 +294,6 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 		}
 		logger.Logger.Info("Received new job data from leader!")
 		k.updateTablesWithJob(job, true)
-		if job.AssignedNode == myUuid.String() {
-			go k.spawnJob(&job)
-		}
 	case EV_JOBEND_FF:
 		job, ok := e.Payload.(JobData)
 		if !ok {

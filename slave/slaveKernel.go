@@ -6,7 +6,6 @@ import (
 	"github.com/juanfresia/claud/connbox"
 	"github.com/juanfresia/claud/logger"
 	"github.com/juanfresia/claud/tracker"
-	"github.com/satori/go.uuid"
 	"os/exec"
 	"strconv"
 	"time"
@@ -18,8 +17,7 @@ const (
 )
 
 // slaveKernel is the module that schedules and launches jobs on
-// the different masters. It uses the Tracker to know whether or
-// not it should behave as the leader of all masters.
+// the different masters.
 type slaveKernel struct {
 	mt          tracker.Tracker
 	newLeaderCh chan string
@@ -99,7 +97,7 @@ func (k *slaveKernel) connectWithLeader() error {
 	event := Event{Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
 
-	logger.Logger.Info("Sent resources to leader")
+	logger.Logger.Info("Sent data to leader")
 	return nil
 }
 
@@ -183,36 +181,6 @@ func (k *slaveKernel) getNodeResources() map[string]NodeResourcesData {
 	return k.nodeResources
 }
 
-// launchJob selects a node with enough resources for launching the job,
-// and forwards an Event with Type: EV_JOB_L to all connections via
-// the k.toConnbox. It returns the JobId of the created job.
-func (k *slaveKernel) launchJob(jobName string, memUsage uint64, imageName string) string {
-	assignedNode := ""
-	for uuid, data := range k.nodeResources {
-		if data.MemFree >= memUsage {
-			assignedNode = uuid
-			break
-		}
-	}
-	if assignedNode == "" {
-		return "Error, not enough resources on claud"
-	}
-
-	logger.Logger.Info("Ordering " + assignedNode + " to launch a new job")
-	job := JobData{JobName: jobName, MemUsage: memUsage, AssignedNode: assignedNode}
-	job.ImageName = imageName
-	job.JobId = uuid.NewV4().String()
-	job.JobStatus = JOB_RUNNING
-
-	k.toConnbox <- Event{Type: EV_JOB_L, Payload: job}
-	k.updateTablesWithJob(job, true)
-
-	if assignedNode == myUuid.String() {
-		go k.spawnJob(&job)
-	}
-	return job.JobId
-}
-
 // stopJob attempts to stop a job, deleting the container
 func (k *slaveKernel) stopJob(jobID string) string {
 	job := k.jobsTable[jobID]
@@ -263,7 +231,7 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 		// Update resources with the info from leader
 		msg, ok := e.Payload.(ConnectionMessage)
 		if !ok {
-			logger.Logger.Error("Received something strange as node resources")
+			logger.Logger.Error("Received something strange as node data")
 			return
 		}
 		for masterUuid, data := range msg.NodeResources {
@@ -272,7 +240,7 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 		for jobId, data := range msg.JobsTable {
 			k.jobsTable[jobId] = data
 		}
-		fmt.Println("Resources updated with info from leader")
+		fmt.Println("Data updated with info from leader")
 	case EV_JOB_L:
 		// If the job needs to be launched on my machine, then
 		// REALLY launch the job.
