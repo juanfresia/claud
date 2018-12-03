@@ -87,10 +87,10 @@ func (s *SlaveServer) getSlavesData(w http.ResponseWriter, r *http.Request) {
 		slaveResources[uuid] = resourceData
 	}
 	// Skip nodes that are masters <- Leave or not?
-	/*  aliveMasters := s.kernel.getMasters()
+	aliveMasters := s.kernel.getMasters()
 	for _, uuid := range aliveMasters {
 		delete(slaveResources, uuid)
-	}*/
+	}
 	slaveDataArray := make([]interface{}, len(slaveResources))
 	i := 0
 	for uuid, resourceData := range slaveResources {

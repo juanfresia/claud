@@ -24,9 +24,9 @@ type MasterServer struct {
 
 // newMasterServer creates a new MasterServer with an already
 // initialized masterKernel.
-func newMasterServer(mem uint64, clusterSize uint) *MasterServer {
+func newMasterServer(clusterSize uint) *MasterServer {
 	m := &MasterServer{}
-	m.kernel = newMasterKernel(mem, clusterSize)
+	m.kernel = newMasterKernel(clusterSize)
 	return m
 }
 
@@ -91,10 +91,10 @@ func (m *MasterServer) getSlavesData(w http.ResponseWriter, r *http.Request) {
 		slaveResources[uuid] = resourceData
 	}
 	// Skip nodes that are masters <- Leave or not?
-	/*  aliveMasters := m.kernel.getMasters()
+	aliveMasters := m.kernel.getMasters()
 	for _, uuid := range aliveMasters {
 		delete(slaveResources, uuid)
-	}*/
+	}
 	slaveDataArray := make([]interface{}, len(slaveResources))
 	i := 0
 	for uuid, resourceData := range slaveResources {
@@ -203,9 +203,9 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 
 // LaunchMaster starts a master on the given IP and port.
 // TODO: replace these many parameters with a MasterKernelConfig struct or something like that
-func LaunchMaster(masterIp, port string, mem uint64, mastersTotal uint) {
+func LaunchMaster(masterIp, port string, mastersTotal uint) {
 	myUuid = uuid.NewV4()
-	m := newMasterServer(mem, mastersTotal)
+	m := newMasterServer(mastersTotal)
 	server := mux.NewRouter()
 
 	server.HandleFunc("/", m.getMyStatus).Methods("GET")

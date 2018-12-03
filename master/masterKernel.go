@@ -26,7 +26,6 @@ type masterKernel struct {
 	newLeaderCh chan string
 
 	mastersAmount int32
-	memTotal      uint64
 	clusterSize   uint
 	nodeResources map[string]NodeResourcesData
 
@@ -44,11 +43,11 @@ type masterKernel struct {
 
 // newMasterKernel creates a new masterKernel together with
 // its Tracker and Connbox.
-func newMasterKernel(mem uint64, mastersTotal uint) masterKernel {
+func newMasterKernel(mastersTotal uint) masterKernel {
 	logger.StartLog("./master-" + myUuid.String()[:8] + ".log")
 	registerEventPayloads()
 
-	k := &masterKernel{memTotal: mem}
+	k := &masterKernel{}
 	k.newLeaderCh = make(chan string, 10)
 	k.clusterSize = mastersTotal/2 + 1
 	fmt.Printf("CLUSTER SIZE: %v\n", k.clusterSize)
@@ -63,7 +62,7 @@ func newMasterKernel(mem uint64, mastersTotal uint) masterKernel {
 	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox)
 
 	// Initialize own resources data
-	k.nodeResources[myUuid.String()] = NodeResourcesData{myUuid, mem, mem}
+	k.nodeResources[myUuid.String()] = NodeResourcesData{myUuid, 0, 0}
 
 	go k.eventLoop()
 	fmt.Println("Master Kernel is up!")
