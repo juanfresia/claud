@@ -246,12 +246,12 @@ func (k *slaveKernel) handleEventOnFollower(e Event) {
 		// REALLY launch the job.
 		job, ok := e.Payload.(JobData)
 		if !ok {
-			logger.Logger.Error("Received something strange as job data")
 			return
 		}
-		logger.Logger.Info("Received new job data from leader!")
+
 		k.updateTablesWithJob(job, true)
 		if job.AssignedNode == myUuid.String() {
+			logger.Logger.Info("Received new job data from leader!")
 			go k.spawnJob(&job)
 		}
 	case EV_JOBEND_FF:

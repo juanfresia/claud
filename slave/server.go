@@ -77,35 +77,18 @@ func (s *SlaveServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	w.Write(response)
 }
 
-// getAliveMasters prints a nice list of all masters in the cluster.
-func (s *SlaveServer) getSlavesData(w http.ResponseWriter, r *http.Request) {
+func (s *SlaveServer) getSlaveData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	nodeResources := s.kernel.getNodeResources()
-	slaveResources := make(map[string]NodeResourcesData)
-	for uuid, resourceData := range nodeResources {
-		slaveResources[uuid] = resourceData
-	}
-	// Skip nodes that are masters <- Leave or not?
-	aliveMasters := s.kernel.getMasters()
-	for _, uuid := range aliveMasters {
-		delete(slaveResources, uuid)
-	}
-	slaveDataArray := make([]interface{}, len(slaveResources))
-	i := 0
-	for uuid, resourceData := range slaveResources {
-		thisNodeData := make(map[string]interface{})
-		thisNodeData["UUID"] = uuid
-		thisNodeData["free_memory"] = resourceData.MemFree
-		thisNodeData["total_memory"] = resourceData.MemTotal
-		slaveDataArray[i] = thisNodeData
-		i += 1
-	}
+	resourceData := nodeResources[myUuid.String()]
 
-	slavesDataResponse := make(map[string]interface{})
-	slavesDataResponse["alive_slaves"] = slaveDataArray
+	thisNodeData := make(map[string]interface{})
+	thisNodeData["UUID"] = myUuid.String()
+	thisNodeData["free_memory"] = resourceData.MemFree
+	thisNodeData["total_memory"] = resourceData.MemTotal
 
-	response, _ := json.Marshal(slavesDataResponse)
+	response, _ := json.Marshal(thisNodeData)
 	w.WriteHeader(http.StatusOK)
 	w.Write(response)
 }
@@ -115,14 +98,23 @@ func (s *SlaveServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	jobsList := s.kernel.getJobsList()
-	jobsDataArray := make([]interface{}, len(jobsList))
+	myJobsList := make(map[string]JobData)
+	for jobId, data := range jobsList {
+		if data.AssignedNode == myUuid.String() {
+			myJobsList[jobId] = data
+		}
+	}
+	jobsDataArray := make([]interface{}, len(myJobsList))
 	i := 0
-	for _, data := range jobsList {
+	for _, data := range myJobsList {
+		if data.AssignedNode != myUuid.String() {
+			continue
+		}
 		thisJobData := make(map[string]interface{})
 		thisJobData["job_full_name"] = data.JobName + "-" + data.JobId
 		thisJobData["job_id"] = data.JobId
 		thisJobData["image"] = data.ImageName
-		thisJobData["asigned_master"] = data.AssignedNode
+		thisJobData["asigned_slave"] = data.AssignedNode
 		thisJobData["status"] = data.JobStatus.String()
 
 		jobsDataArray[i] = thisJobData
@@ -165,8 +157,7 @@ func LaunchSlave(slaveIp, port string, mem uint64, mastersTotal uint) {
 	server := mux.NewRouter()
 
 	server.HandleFunc("/", s.getMyStatus).Methods("GET")
-	server.HandleFunc("/masters", s.getAliveMasters).Methods("GET")
-	server.HandleFunc("/slaves", s.getSlavesData).Methods("GET")
+	server.HandleFunc("/self", s.getSlaveData).Methods("GET")
 	server.HandleFunc("/leader", s.getLeaderStatus).Methods("GET")
 	server.HandleFunc("/jobs", s.getJobsList).Methods("GET")
 	server.HandleFunc("/jobs/{id}", s.stopJob).Methods("DELETE")
