@@ -186,13 +186,13 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if m.kernel.getLeaderId() != myUuid.String() {
-		// TODO: Forward to master leader somehow
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("{\"message\": \"Not the leader\"}"))
+	// If there is no leader, should not launch job
+	if m.kernel.getLeaderId() == "NO LEADER" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("{\"message\": \"Cannot launch job because cluster is on anarchy\"}"))
 		return
 	}
-	// TODO: refactor this to pass only one job type element
+
 	jobId := m.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
 
 	w.WriteHeader(http.StatusOK)

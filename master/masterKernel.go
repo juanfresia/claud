@@ -187,6 +187,13 @@ func (k *masterKernel) getNodeResources() map[string]NodeResourcesData {
 // and forwards an Event with Type: EV_JOB_L to all connections via
 // the k.toConnbox. It returns the JobId of the created job.
 func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName string) string {
+	// If ain't the leader, forward the job launch job
+	if k.getLeaderId() != myUuid.String() {
+		job := JobData{JobName: jobName, MemUsage: memUsage, ImageName: imageName}
+		k.toConnbox <- Event{Type: EV_JOB_FF, Payload: job}
+		return "Job forwarded to leader, see /jobs"
+	}
+
 	assignedNode := ""
 	for uuid, data := range k.nodeResources {
 		if data.MemFree >= memUsage {
@@ -335,6 +342,14 @@ func (k *masterKernel) handleEventOnLeader(e Event) {
 			return
 		}
 		k.toConnbox <- e
+	case EV_JOB_FF:
+		// Check the msgScheduler has a JobData and forward it to the follower
+		job, ok := e.Payload.(JobData)
+		if !ok {
+			logger.Logger.Error("Received something strange as job data")
+			return
+		}
+		k.launchJob(job.JobName, job.MemUsage, job.ImageName)
 	default:
 		// Should never happen
 		logger.Logger.Error("Received wrong Event type!")

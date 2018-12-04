@@ -39,7 +39,7 @@ func (s *Socket) launch() {
 func (s *Socket) send(event Message) {
 	err := s.enc.Encode(event)
 	if err != nil {
-		logger.Logger.Error("Error on Socket sending message: " + err.Error())
+		//logger.Logger.Error("Error on Socket sending message: " + err.Error())
 	}
 }
 
