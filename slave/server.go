@@ -139,10 +139,15 @@ func (s *SlaveServer) stopJob(w http.ResponseWriter, r *http.Request) {
 	_, exists := jobsList[jobID]
 	if !exists {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("{\"message\": \"Job " + jobID + " does not exist\"}"))
+		w.Write([]byte("{\"message\": \"Job " + jobID + " does not exist on this slave\"}"))
 		return
 	}
 
+	if jobsList[jobID].AssignedNode != myUuid.String() {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("{\"message\": \"Job " + jobID + " does not exist on this slave\"}"))
+		return
+	}
 	// TODO: add error checking
 	jobID = s.kernel.stopJob(jobID)
 	w.WriteHeader(http.StatusOK)

@@ -8,7 +8,6 @@ import (
 	"github.com/juanfresia/claud/logger"
 	"github.com/juanfresia/claud/tracker"
 	"github.com/satori/go.uuid"
-	"os/exec"
 	"time"
 )
 
@@ -59,9 +58,6 @@ func newMasterKernel(mastersTotal uint) masterKernel {
 	k.toConnbox = make(chan interface{}, 10)
 	k.fromConnbox = make(chan interface{}, 10)
 	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox)
-
-	// Initialize own resources data
-	k.nodeResources[myUuid.String()] = NodeResourcesData{myUuid, 0, 0}
 
 	go k.eventLoop()
 	fmt.Println("Master Kernel is up!")
@@ -117,13 +113,7 @@ func (k *masterKernel) connectWithLeader() error {
 	logger.Logger.Info("Starting connection as follower master")
 	// First send own resources and jobs to the leader
 	myResources := make(map[string]NodeResourcesData)
-	myResources[myUuid.String()] = k.nodeResources[myUuid.String()]
 	myJobs := make(map[string]JobData)
-	for jobId, data := range k.jobsTable {
-		if data.AssignedNode == myUuid.String() {
-			myJobs[jobId] = data
-		}
-	}
 	msg := &ConnectionMessage{myResources, myJobs}
 	event := Event{Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
@@ -223,22 +213,12 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 // stopJob attempts to stop a job, deleting the container
 func (k *masterKernel) stopJob(jobID string) string {
 	job := k.jobsTable[jobID]
-	if job.AssignedNode != myUuid.String() {
-		// If job aint on my machine, forward the JOBEND event
-		k.toConnbox <- Event{Type: EV_JOBEND_FF, Payload: job}
+	if job.AssignedNode == myUuid.String() {
+		logger.Logger.Error("Someone ordered this master to stop a job!")
 		return jobID
 	}
-	jobFullName := job.JobName + "-" + job.JobId
-	logger.Logger.Info("Stopping job on this node: " + jobFullName)
-
-	cmd := "sudo docker stop " + jobFullName
-	fmt.Printf("%v\n", cmd)
-	jobCmd := exec.Command("/bin/bash", "-c", cmd)
-	err := jobCmd.Run()
-	if err != nil {
-		logger.Logger.Error("Couldn't successfully stop job " + jobFullName + ":" + err.Error())
-		return ""
-	}
+	// If job aint on my machine, forward the JOBEND event
+	k.toConnbox <- Event{Type: EV_JOBEND_FF, Payload: job}
 	return jobID
 }
 
