@@ -21,6 +21,8 @@ type Connbox struct {
 	toNode   chan<- interface{} // write only channel
 	fromNode <-chan interface{} // read only channel
 
+	closeSocket chan string // hear for closed sockets
+
 	connections     []*Socket
 	connectionsLock *sync.Mutex
 	fromSocket      chan Message
@@ -42,6 +44,7 @@ func NewConnBox(fromNode, toNode chan interface{}) *Connbox {
 	cb.connectionsLock = &sync.Mutex{}
 
 	cb.close = make(chan bool, 1)
+	cb.closeSocket = make(chan string, 10)
 	cb.fromSocket = make(chan Message)
 
 	return cb
@@ -80,6 +83,7 @@ func (cb *Connbox) handleNewSocket(conn net.Conn) {
 func (cb *Connbox) addSocket(s *Socket) {
 	cb.connectionsLock.Lock()
 	s.toConnbox = cb.fromSocket
+	s.closeSignal = cb.closeSocket
 	s.fromConnbox = make(chan Message, 10)
 	cb.connections = append(cb.connections, s)
 	cb.connectionsLock.Unlock()
@@ -113,6 +117,8 @@ func (cb *Connbox) eventLoop() {
 			for _, c := range cb.connections {
 				c.fromConnbox <- Message{event}
 			}
+		case ip := <-cb.closeSocket:
+			logger.Logger.Info("Closed socket " + ip)
 		}
 	}
 }
