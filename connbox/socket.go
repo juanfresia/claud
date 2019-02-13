@@ -7,7 +7,6 @@ import (
 	"net"
 )
 
-
 type Payload struct {
 	Payload interface{}
 }

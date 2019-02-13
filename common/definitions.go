@@ -19,6 +19,7 @@ const (
 )
 
 type Event struct {
+	Src     uuid.UUID
 	Type    EventType
 	Payload interface{}
 }

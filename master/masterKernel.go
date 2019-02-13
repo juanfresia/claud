@@ -27,12 +27,16 @@ type masterKernel struct {
 	clusterSize   uint
 	nodeResources map[string]NodeResourcesData
 
+	// This maps IP:port to node uuid
+	nodesByAddress map[string]string
+
 	// TODO: Erase the finished jobs from the table after a while?
 	jobsTable map[string]JobData
 
 	connbox     *connbox.Connbox
 	toConnbox   chan interface{}
 	fromConnbox chan interface{}
+	deadNode    chan string
 }
 
 // -------------------------------------------------------------------
@@ -52,12 +56,14 @@ func newMasterKernel(mastersTotal uint) masterKernel {
 	k.mt = tracker.NewTracker(k.newLeaderCh, myUuid, k.clusterSize, true)
 
 	k.nodeResources = make(map[string]NodeResourcesData)
+	k.nodesByAddress = make(map[string]string)
 	k.jobsTable = make(map[string]JobData)
 
 	// Create buffered channels with ConnBox
 	k.toConnbox = make(chan interface{}, 10)
 	k.fromConnbox = make(chan interface{}, 10)
-	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox)
+	k.deadNode = make(chan string, 10)
+	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox, k.deadNode)
 
 	go k.eventLoop()
 	fmt.Println("Master Kernel is up!")
@@ -101,8 +107,15 @@ func (k *masterKernel) connectWithFollower(e Event) error {
 	// Send all master resources and jobs to followers
 	logger.Logger.Info("Sending all data to follower nodes")
 	//fmt.Println("Sending all data to follower nodes")
-	k.toConnbox <- Event{Type: EV_RES_L, Payload: &ConnectionMessage{k.nodeResources, k.jobsTable}}
+	k.toConnbox <- Event{Src: myUuid, Type: EV_RES_L, Payload: &ConnectionMessage{k.nodeResources, k.jobsTable}}
 	return nil
+}
+
+//TODO: do something useful here
+func (k *masterKernel) handleNodeDeath(address string) {
+	logger.Logger.Info("A node has died " + address + "(" + k.nodesByAddress[address] + ")")
+	delete(k.nodesByAddress, address)
+	fmt.Printf("Remaining nodes: %v", k.nodesByAddress)
 }
 
 // connectWithLeader makes the follower send its resources to the
@@ -115,7 +128,7 @@ func (k *masterKernel) connectWithLeader() error {
 	myResources := make(map[string]NodeResourcesData)
 	myJobs := make(map[string]JobData)
 	msg := &ConnectionMessage{myResources, myJobs}
-	event := Event{Type: EV_RES_F, Payload: msg}
+	event := Event{Src: myUuid, Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
 
 	logger.Logger.Info("Sent data to leader")
@@ -190,7 +203,7 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 	// If ain't the leader, forward the job launch job
 	if k.getLeaderId() != myUuid.String() {
 		job := JobData{JobName: jobName, MemUsage: memUsage, ImageName: imageName}
-		k.toConnbox <- Event{Type: EV_JOB_FF, Payload: job}
+		k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_FF, Payload: job}
 		return "Job forwarded to leader, see /jobs"
 	}
 
@@ -211,7 +224,7 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 	job.JobId = uuid.NewV4().String()
 	job.JobStatus = JOB_RUNNING
 
-	k.toConnbox <- Event{Type: EV_JOB_L, Payload: job}
+	k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_L, Payload: job}
 	k.updateTablesWithJob(job, true)
 
 	return job.JobId
@@ -225,7 +238,7 @@ func (k *masterKernel) stopJob(jobID string) string {
 		return jobID
 	}
 	// If job aint on my machine, forward the JOBEND event
-	k.toConnbox <- Event{Type: EV_JOBEND_FF, Payload: job}
+	k.toConnbox <- Event{Src: myUuid, Type: EV_JOBEND_FF, Payload: job}
 	return jobID
 }
 
@@ -254,6 +267,9 @@ func (k *masterKernel) eventLoop() {
 			} else {
 				k.handleEventOnFollower(aux)
 			}
+
+		case address := <-k.deadNode:
+			k.handleNodeDeath(address)
 		}
 	}
 }
@@ -265,8 +281,13 @@ func (k *masterKernel) handleEventOnFollower(msg connbox.Message) {
 	if !ok {
 		logger.Logger.Error("Received something that is not an Event")
 	}
-	src := msg.SrcAddr
-	logger.Logger.Info("Message received from " + src.String())
+	// TODO: Maybe this should not be here x2
+	src := msg.SrcAddr.String()
+	if _, exists := k.nodesByAddress[src]; !exists {
+		k.nodesByAddress[src] = e.Src.String()
+	}
+
+	logger.Logger.Info("Message received from " + src)
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader
@@ -324,8 +345,14 @@ func (k *masterKernel) handleEventOnLeader(msg connbox.Message) {
 	if !ok {
 		logger.Logger.Error("Received something that is not an Event")
 	}
-	src := msg.SrcAddr
-	logger.Logger.Info("Message received from " + src.String())
+
+	// TODO: Maybe this should not be here
+	src := msg.SrcAddr.String()
+	if _, exists := k.nodesByAddress[src]; !exists {
+		k.nodesByAddress[src] = e.Src.String()
+	}
+
+	logger.Logger.Info("Message received from " + src)
 	switch e.Type {
 	case EV_RES_F:
 		k.connectWithFollower(e)

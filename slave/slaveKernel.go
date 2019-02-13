@@ -33,6 +33,7 @@ type slaveKernel struct {
 	connbox     *connbox.Connbox
 	toConnbox   chan interface{}
 	fromConnbox chan interface{}
+	deadNode    chan string
 }
 
 // -------------------------------------------------------------------
@@ -57,7 +58,8 @@ func newSlaveKernel(mem uint64, mastersTotal uint) slaveKernel {
 	// Create buffered channels with ConnBox
 	k.toConnbox = make(chan interface{}, 10)
 	k.fromConnbox = make(chan interface{}, 10)
-	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox)
+	k.deadNode = make(chan string, 10)
+	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox, k.deadNode)
 
 	// Initialize own resources data
 	k.nodeResources[myUuid.String()] = NodeResourcesData{myUuid, mem, mem}
@@ -94,7 +96,7 @@ func (k *slaveKernel) connectWithLeader() error {
 		}
 	}
 	msg := &ConnectionMessage{myResources, myJobs}
-	event := Event{Type: EV_RES_F, Payload: msg}
+	event := Event{Src: myUuid, Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
 
 	logger.Logger.Info("Sent data to leader")
@@ -150,7 +152,7 @@ func (k *slaveKernel) spawnJob(job *JobData) {
 	}
 
 	logger.Logger.Info("Job finished on this follower slave!")
-	k.toConnbox <- Event{Type: EV_JOBEND_F, Payload: *job}
+	k.toConnbox <- Event{Src: myUuid, Type: EV_JOBEND_F, Payload: *job}
 
 	k.updateTablesWithJob(*job, false)
 }
@@ -186,7 +188,7 @@ func (k *slaveKernel) stopJob(jobID string) string {
 	job := k.jobsTable[jobID]
 	if job.AssignedNode != myUuid.String() {
 		// If job aint on my machine, forward the JOBEND event
-		k.toConnbox <- Event{Type: EV_JOBEND_FF, Payload: job}
+		k.toConnbox <- Event{Src: myUuid, Type: EV_JOBEND_FF, Payload: job}
 		return jobID
 	}
 	jobFullName := job.JobName + "-" + job.JobId
@@ -219,6 +221,10 @@ func (k *slaveKernel) eventLoop() {
 
 		case msg := <-k.fromConnbox:
 			k.handleEventOnFollower(msg.(connbox.Message))
+
+		case <-k.deadNode:
+			// Slaves can ignore deadNote signal
+			continue
 		}
 	}
 }

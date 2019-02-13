@@ -11,7 +11,7 @@ import (
 
 type Message struct {
 	SrcAddr net.Addr
-	Msg interface{}
+	Msg     interface{}
 }
 
 const (
@@ -23,6 +23,7 @@ type Connbox struct {
 	fromNode <-chan interface{} // read only channel
 
 	closeSocket chan net.Addr // hear for closed sockets
+	deadNode    chan string
 
 	connections     []*Socket
 	connectionsLock *sync.Mutex
@@ -36,10 +37,12 @@ func Register(value interface{}) {
 	gob.Register(value)
 }
 
-func NewConnBox(fromNode, toNode chan interface{}) *Connbox {
+func NewConnBox(fromNode, toNode chan interface{}, deadNode chan string) *Connbox {
 	cb := &Connbox{}
 	cb.toNode = toNode
 	cb.fromNode = fromNode
+
+	cb.deadNode = deadNode
 
 	cb.connections = make([]*Socket, 0)
 	cb.connectionsLock = &sync.Mutex{}
@@ -120,6 +123,7 @@ func (cb *Connbox) eventLoop() {
 			}
 		case ip := <-cb.closeSocket:
 			logger.Logger.Info("Closed socket " + ip.String())
+			cb.deadNode <- ip.String()
 		}
 	}
 }
