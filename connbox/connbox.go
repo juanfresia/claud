@@ -10,6 +10,7 @@ import (
 )
 
 type Message struct {
+	SrcAddr net.Addr
 	Msg interface{}
 }
 
@@ -21,13 +22,13 @@ type Connbox struct {
 	toNode   chan<- interface{} // write only channel
 	fromNode <-chan interface{} // read only channel
 
-	closeSocket chan string // hear for closed sockets
+	closeSocket chan net.Addr // hear for closed sockets
 
 	connections     []*Socket
 	connectionsLock *sync.Mutex
 	fromSocket      chan Message
 
-	close chan<- bool
+	close chan<- bool // channel to close the connbox
 	ready chan bool
 }
 
@@ -44,7 +45,7 @@ func NewConnBox(fromNode, toNode chan interface{}) *Connbox {
 	cb.connectionsLock = &sync.Mutex{}
 
 	cb.close = make(chan bool, 1)
-	cb.closeSocket = make(chan string, 10)
+	cb.closeSocket = make(chan net.Addr, 10)
 	cb.fromSocket = make(chan Message)
 
 	return cb
@@ -112,13 +113,13 @@ func (cb *Connbox) eventLoop() {
 		select {
 		// Received a message from a peer
 		case event := <-cb.fromSocket:
-			cb.toNode <- event.Msg
+			cb.toNode <- event
 		case event := <-cb.fromNode:
 			for _, c := range cb.connections {
-				c.fromConnbox <- Message{event}
+				c.fromConnbox <- Message{Msg: event}
 			}
 		case ip := <-cb.closeSocket:
-			logger.Logger.Info("Closed socket " + ip)
+			logger.Logger.Info("Closed socket " + ip.String())
 		}
 	}
 }

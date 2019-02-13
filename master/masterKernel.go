@@ -244,10 +244,15 @@ func (k *masterKernel) eventLoop() {
 			k.restartConnBox(newLeader)
 
 		case msg := <-k.fromConnbox:
+			aux, ok := msg.(connbox.Message)
+			if !ok {
+				logger.Logger.Error("Error casting message received from connbox")
+				continue
+			}
 			if k.mt.ImLeader() {
-				k.handleEventOnLeader(msg.(Event))
+				k.handleEventOnLeader(aux)
 			} else {
-				k.handleEventOnFollower(msg.(Event))
+				k.handleEventOnFollower(aux)
 			}
 		}
 	}
@@ -255,7 +260,13 @@ func (k *masterKernel) eventLoop() {
 
 // handleEventOnFollower handles all Events forwarded by the connbox
 // in a master follower.
-func (k *masterKernel) handleEventOnFollower(e Event) {
+func (k *masterKernel) handleEventOnFollower(msg connbox.Message) {
+	e, ok := msg.Msg.(Event)
+	if !ok {
+		logger.Logger.Error("Received something that is not an Event")
+	}
+	src := msg.SrcAddr
+	logger.Logger.Info("Message received from " + src.String())
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader
@@ -308,7 +319,13 @@ func (k *masterKernel) handleEventOnFollower(e Event) {
 
 //handleEventOnLeader handles all Events forwarded by the connbox
 // in the master leader.
-func (k *masterKernel) handleEventOnLeader(e Event) {
+func (k *masterKernel) handleEventOnLeader(msg connbox.Message) {
+	e, ok := msg.Msg.(Event)
+	if !ok {
+		logger.Logger.Error("Received something that is not an Event")
+	}
+	src := msg.SrcAddr
+	logger.Logger.Info("Message received from " + src.String())
 	switch e.Type {
 	case EV_RES_F:
 		k.connectWithFollower(e)

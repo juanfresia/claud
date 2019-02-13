@@ -218,14 +218,20 @@ func (k *slaveKernel) eventLoop() {
 			k.restartConnBox(newLeader)
 
 		case msg := <-k.fromConnbox:
-			k.handleEventOnFollower(msg.(Event))
+			k.handleEventOnFollower(msg.(connbox.Message))
 		}
 	}
 }
 
 // handleEventOnFollower handles all Events forwarded by the connbox
 // in a master follower.
-func (k *slaveKernel) handleEventOnFollower(e Event) {
+func (k *slaveKernel) handleEventOnFollower(msg connbox.Message) {
+	e, ok := msg.Msg.(Event)
+	if !ok {
+		logger.Logger.Error("Received something that is not an Event")
+	}
+	src := msg.SrcAddr
+	logger.Logger.Info("Message received from " + src.String())
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader

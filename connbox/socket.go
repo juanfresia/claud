@@ -7,15 +7,20 @@ import (
 	"net"
 )
 
+
+type Payload struct {
+	Payload interface{}
+}
+
 type Socket struct {
-	ip          string
+	ip          net.Addr
 	toConnbox   chan<- Message
 	fromConnbox chan Message
 
 	close       chan bool
-	closeSignal chan string
+	closeSignal chan net.Addr
 
-	fromSocket chan Message
+	fromSocket chan Payload
 
 	enc *gob.Encoder
 	dec *gob.Decoder
@@ -29,8 +34,8 @@ func newSocket(conn net.Conn) *Socket {
 	sock.enc = enc
 	sock.dec = dec
 
-	sock.ip = conn.LocalAddr().String()
-	sock.fromSocket = make(chan Message, 10)
+	sock.ip = conn.RemoteAddr()
+	sock.fromSocket = make(chan Payload, 10)
 	sock.close = make(chan bool, 1)
 
 	return sock
@@ -41,16 +46,16 @@ func (s *Socket) launch() {
 	go s.eventLoop()
 }
 
-func (s *Socket) send(event Message) {
+func (s *Socket) send(event Payload) {
 	err := s.enc.Encode(event)
 	if err != nil {
-		logger.Logger.Error("Error on Socket sending message: " + err.Error())
+		logger.Logger.Error("Error on Socket sending Payload: " + err.Error())
 		s.close <- true
 	}
 }
 
 func (s *Socket) receiveLoop() {
-	var event Message
+	var event Payload
 	var err error
 	for {
 		// Receive
@@ -62,7 +67,7 @@ func (s *Socket) receiveLoop() {
 				s.close <- true
 				break
 			}
-			logger.Logger.Error("Error on Socket receiving message: " + err.Error())
+			logger.Logger.Error("Error on Socket receiving Payload: " + err.Error())
 		} else {
 			s.fromSocket <- event
 		}
@@ -73,11 +78,11 @@ func (s *Socket) receiveLoop() {
 func (s *Socket) eventLoop() {
 	for {
 		select {
-		// Received a message from connbox
+		// Received a Payload from connbox
 		case event := <-s.fromConnbox:
-			s.send(event)
+			s.send(Payload{event.Msg})
 		case event := <-s.fromSocket:
-			s.toConnbox <- event
+			s.toConnbox <- Message{s.ip, event.Payload}
 		case <-s.close:
 			// Send close to connbox
 			logger.Logger.Info("A socket has been closed")
