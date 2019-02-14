@@ -236,8 +236,8 @@ func (k *slaveKernel) handleEventOnFollower(msg connbox.Message) {
 	if !ok {
 		logger.Logger.Error("Received something that is not an Event")
 	}
-	src := msg.SrcAddr
-	logger.Logger.Info("Message received from " + src.String())
+
+	//logger.Logger.Info("Message received from " + msg.SrcAddr.String())
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader
@@ -285,6 +285,8 @@ func (k *slaveKernel) handleEventOnFollower(msg connbox.Message) {
 		if job.AssignedNode != myUuid.String() {
 			k.updateTablesWithJob(job, false)
 		}
+	case EV_NODE_DEATH:
+		return
 	default:
 		// Should never happen
 		logger.Logger.Error("Received wrong Event type!")

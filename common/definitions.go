@@ -16,6 +16,7 @@ const (
 	EV_JOBEND_L
 	EV_JOBEND_F
 	EV_JOBEND_FF
+	EV_NODE_DEATH
 )
 
 type Event struct {
@@ -40,6 +41,7 @@ const (
 	JOB_RUNNING JobState = iota
 	JOB_FINISHED
 	JOB_FAILED
+	JOB_PENDING
 )
 
 func (js JobState) String() string {
@@ -47,6 +49,7 @@ func (js JobState) String() string {
 		"RUNNING",
 		"FINISHED",
 		"FAILED",
+		"PENDING",
 	}
 	return strMap[js]
 }

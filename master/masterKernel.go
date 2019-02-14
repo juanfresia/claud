@@ -111,11 +111,31 @@ func (k *masterKernel) connectWithFollower(e Event) error {
 	return nil
 }
 
-//TODO: do something useful here
+// handleNodeDeath is called every time the master leader
+// detects a node has died via the deadNode channel. The
+// leader then forwards a "node death" event to the other
+// masters, and all masters poison the jobs of such node.
 func (k *masterKernel) handleNodeDeath(address string) {
 	logger.Logger.Info("A node has died " + address + "(" + k.nodesByAddress[address] + ")")
+	nodeUuid := k.nodesByAddress[address]
+	// Send the dead node UUID to all masters
+	msg := Event{Src: myUuid, Type: EV_NODE_DEATH, Payload: nodeUuid}
+	k.toConnbox <- msg
+	// TODO: Re-schedule jobs
+	k.poisonJobs(nodeUuid)
 	delete(k.nodesByAddress, address)
-	fmt.Printf("Remaining nodes: %v", k.nodesByAddress)
+}
+
+// poisonJobs marks as pending all jobs related to the
+// node with the given uuid.
+func (k *masterKernel) poisonJobs(uuid string) {
+	for jobId, data := range k.jobsTable {
+		if (data.AssignedNode == uuid) && (data.JobStatus == JOB_RUNNING) {
+			data.JobStatus = JOB_PENDING
+			k.jobsTable[jobId] = data
+		}
+	}
+	delete(k.nodeResources, uuid)
 }
 
 // connectWithLeader makes the follower send its resources to the
@@ -287,7 +307,7 @@ func (k *masterKernel) handleEventOnFollower(msg connbox.Message) {
 		k.nodesByAddress[src] = e.Src.String()
 	}
 
-	logger.Logger.Info("Message received from " + src)
+	//logger.Logger.Info("Message received from " + src)
 	switch e.Type {
 	case EV_RES_L:
 		// Update resources with the info from leader
@@ -332,6 +352,14 @@ func (k *masterKernel) handleEventOnFollower(msg connbox.Message) {
 		if job.AssignedNode != myUuid.String() {
 			k.updateTablesWithJob(job, false)
 		}
+	case EV_NODE_DEATH:
+		uuid, ok := e.Payload.(string)
+		if !ok {
+			logger.Logger.Error("Received something strange as a dead node UUID")
+			return
+		}
+		logger.Logger.Info("Detected the node " + uuid + " has died")
+		k.poisonJobs(uuid)
 	default:
 		// Should never happen
 		logger.Logger.Error("Received wrong Event type!")
