@@ -121,8 +121,8 @@ func (k *masterKernel) handleNodeDeath(address string) {
 	// Send the dead node UUID to all masters
 	msg := Event{Src: myUuid, Type: EV_NODE_DEATH, Payload: nodeUuid}
 	k.toConnbox <- msg
-	// TODO: Re-schedule jobs
 	k.poisonJobs(nodeUuid)
+	k.relaunchPendingJobs()
 	delete(k.nodesByAddress, address)
 }
 
@@ -248,6 +248,30 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 	k.updateTablesWithJob(job, true)
 
 	return job.JobId
+}
+
+func (k *masterKernel) relaunchPendingJobs() {
+	for _, jobData := range k.jobsTable {
+		if jobData.JobStatus == JOB_PENDING {
+			assignedNode := ""
+			for uuid, data := range k.nodeResources {
+				if data.MemFree >= jobData.MemUsage {
+					assignedNode = uuid
+					break
+				}
+			}
+			if assignedNode == "" {
+				logger.Logger.Error("Not enough resources on claud to launch pending job: " + jobData.JobId)
+				continue
+			}
+
+			jobData.AssignedNode = assignedNode
+			jobData.JobStatus = JOB_RUNNING
+			jobData.JobName += "x" // Only for testing on same machine!
+			k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_L, Payload: jobData}
+			k.updateTablesWithJob(jobData, true)
+		}
+	}
 }
 
 // stopJob attempts to stop a job, deleting the container
