@@ -30,7 +30,7 @@ type Connbox struct {
 	fromSocket      chan Message
 
 	close chan<- bool // channel to close the connbox
-	ready chan bool
+	Ready chan bool
 }
 
 func Register(value interface{}) {
@@ -48,6 +48,7 @@ func NewConnBox(fromNode, toNode chan interface{}, deadNode chan string) *Connbo
 	cb.connectionsLock = &sync.Mutex{}
 
 	cb.close = make(chan bool, 1)
+	cb.Ready = make(chan bool, 1)
 	cb.closeSocket = make(chan net.Addr, 10)
 	cb.fromSocket = make(chan Message)
 
@@ -108,6 +109,8 @@ func (cb *Connbox) StartActive(addr string) error {
 	s.launch()
 
 	go cb.eventLoop()
+
+	cb.Ready <- true
 	return nil
 }
 

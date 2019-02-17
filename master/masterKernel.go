@@ -81,6 +81,35 @@ func registerEventPayloads() {
 	connbox.Register(Event{})
 }
 
+// This need refinement to check for every combination of previos + advertised
+// state
+func (k *masterKernel) reconcileJobsFrom(src uuid.UUID, jobs map[string]JobData) {
+	logger.Logger.Info("Reconciling jobs from: " + src.String())
+	for jobId, job := range jobs {
+
+		_, exists := k.jobsTable[jobId]
+		if exists {
+			logger.Logger.Info("Metadata for the job already exists")
+		}
+
+		if job.AssignedNode == src.String() {
+			logger.Logger.Info("It's the owner of the job! Better trust'em")
+		} else if !exists && (job.JobStatus == JOB_RUNNING) {
+			job.JobStatus = JOB_PENDING
+		}
+
+		logger.Logger.Info("Updating job [" + jobId + "]")
+		k.jobsTable[jobId] = job
+	}
+}
+
+func (k *masterKernel) reconcileResourcesFrom(src uuid.UUID, res map[string]NodeResourcesData) {
+	logger.Logger.Info("Reconciling resources from: " + src.String())
+	for masterUuid, data := range res {
+		k.nodeResources[masterUuid] = data
+	}
+}
+
 // connectWithFollowers makes the leader wait for all followers
 // to make contact sending their resources. The function gathers
 // all the followers resources on the nodeResources table and
@@ -96,12 +125,8 @@ func (k *masterKernel) connectWithFollower(e Event) error {
 		return errors.New("Received something strange as node data")
 	}
 
-	for masterUuid, data := range msg.NodeResources {
-		k.nodeResources[masterUuid] = data
-	}
-	for jobId, data := range msg.JobsTable {
-		k.jobsTable[jobId] = data
-	}
+	k.reconcileResourcesFrom(e.Src, msg.NodeResources)
+	k.reconcileJobsFrom(e.Src, msg.JobsTable)
 
 	logger.Logger.Info("Updated node data")
 	// Send all master resources and jobs to followers
@@ -155,17 +180,30 @@ func (k *masterKernel) connectWithLeader() error {
 	return nil
 }
 
+func (k *masterKernel) becomeLeader() {
+	// Upon becoming a leader, mark everything as JOB_PENDING
+	for jobId, data := range k.jobsTable {
+		if data.JobStatus == JOB_RUNNING {
+			data.JobStatus = JOB_PENDING
+			k.jobsTable[jobId] = data
+		}
+	}
+}
+
 // restartConnBox reopens all connections on the connbox module.
 // Should be called every time a new leader is chosen.
 func (k *masterKernel) restartConnBox(leaderIp string) {
 	// TODO: Close current connbox connections via the channel
 	k.mastersAmount = int32(len(k.getMasters()))
 	if k.mt.ImLeader() {
+		k.becomeLeader()
 		go k.connbox.StartPassive(leaderPort)
 	} else {
 		// Tricky
 		time.Sleep(tracker.LearningTmr)
 		go k.connbox.StartActive(leaderIp + ":" + leaderPort)
+		// TODO: warning, will block if connbox fails to start
+		<-k.connbox.Ready
 		k.connectWithLeader()
 	}
 }
@@ -265,6 +303,7 @@ func (k *masterKernel) relaunchPendingJobs() {
 				continue
 			}
 
+			logger.Logger.Info("Reassigning job " + jobData.JobId + " to node " + assignedNode)
 			jobData.AssignedNode = assignedNode
 			jobData.JobStatus = JOB_RUNNING
 			jobData.JobName += "x" // Only for testing on same machine!

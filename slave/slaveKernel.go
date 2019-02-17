@@ -111,6 +111,9 @@ func (k *slaveKernel) restartConnBox(leaderIp string) {
 
 	time.Sleep(tracker.LearningTmr)
 	go k.connbox.StartActive(leaderIp + ":" + leaderPort)
+
+	// TODO: warning, will block if connbox fails to start
+	<-k.connbox.Ready
 	k.connectWithLeader()
 }
 
