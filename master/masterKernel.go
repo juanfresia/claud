@@ -91,13 +91,19 @@ func (k *masterKernel) reconcileJobsFrom(src uuid.UUID, jobs map[string]JobData)
 	logger.Logger.Info("Reconciling jobs from: " + src.String())
 	for jobId, job := range jobs {
 
-		_, exists := k.jobsTable[jobId]
+		previousJob, exists := k.jobsTable[jobId]
 		if exists {
 			logger.Logger.Info("Metadata for the job already exists")
 		}
 
 		if job.AssignedNode == src.String() {
-			logger.Logger.Info("It's the owner of the job! Better trust'em")
+			if exists && previousJob.JobStatus == JOB_LOST {
+				// Here we must tell the owner to kill the job, since we already
+				// rescheduled it. No action is needed in the leader.
+				logger.Logger.Info("It's the owner of the job, but job is lost. Sending delete")
+				k.toConnbox <- Event{Src: myUuid, Type: EV_JOBEND_FF, Payload: job}
+				continue
+			}
 		} else if !exists && (job.JobStatus == JOB_RUNNING) {
 			job.JobStatus = JOB_PENDING
 		} else if exists {

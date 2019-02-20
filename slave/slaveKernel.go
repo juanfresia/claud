@@ -110,6 +110,7 @@ func (k *slaveKernel) restartConnBox(leaderIp string) {
 	k.mastersAmount = int32(len(k.getMasters()))
 
 	time.Sleep(tracker.LearningTmr)
+	// time.Sleep(90 * time.Second)
 	go k.connbox.StartActive(leaderIp + ":" + leaderPort)
 
 	// TODO: warning, will block if connbox fails to start
