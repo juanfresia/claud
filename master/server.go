@@ -128,6 +128,7 @@ func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 		thisJobData["image"] = data.ImageName
 		thisJobData["asigned_slave"] = data.AssignedNode
 		thisJobData["status"] = data.JobStatus.String()
+		thisJobData["last_update"] = data.LastUpdate.String()
 
 		jobsDataArray[i] = thisJobData
 		i += 1
@@ -193,10 +194,19 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobId := m.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
+	jobId, err := m.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("{\"error\": \"" + err.Error() + "\"}"))
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("{\"job_id\": \"" + jobId + "\"}"))
+	if jobId == "" {
+		w.Write([]byte("{\"status\": \"Job creation forwarded to the leader\"}"))
+	} else {
+		w.Write([]byte("{\"job_id\": \"" + jobId + "\"}"))
+	}
 }
 
 // --------------------------- Main function ---------------------------

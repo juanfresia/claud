@@ -37,6 +37,8 @@ type masterKernel struct {
 	toConnbox   chan interface{}
 	fromConnbox chan interface{}
 	deadNode    chan string
+
+	reescheduleTicker *time.Ticker
 }
 
 // -------------------------------------------------------------------
@@ -64,6 +66,8 @@ func newMasterKernel(mastersTotal uint) masterKernel {
 	k.fromConnbox = make(chan interface{}, 10)
 	k.deadNode = make(chan string, 10)
 	k.connbox = connbox.NewConnBox(k.toConnbox, k.fromConnbox, k.deadNode)
+
+	k.reescheduleTicker = time.NewTicker(time.Minute)
 
 	go k.eventLoop()
 	fmt.Println("Master Kernel is up!")
@@ -96,9 +100,15 @@ func (k *masterKernel) reconcileJobsFrom(src uuid.UUID, jobs map[string]JobData)
 			logger.Logger.Info("It's the owner of the job! Better trust'em")
 		} else if !exists && (job.JobStatus == JOB_RUNNING) {
 			job.JobStatus = JOB_PENDING
+		} else if exists {
+			// TODO: Here is where it gets complicated, the masters should agree upon
+			// something. Currently, the first one is the one that counts.
+			logger.Logger.Info("Existing job but not owner, ignoring request")
+			continue
 		}
 
 		logger.Logger.Info("Updating job [" + jobId + "]")
+		job.LastUpdate = time.Now()
 		k.jobsTable[jobId] = job
 	}
 }
@@ -108,6 +118,14 @@ func (k *masterKernel) reconcileResourcesFrom(src uuid.UUID, res map[string]Node
 	for masterUuid, data := range res {
 		k.nodeResources[masterUuid] = data
 	}
+}
+
+func (k *masterKernel) updateJobData(data JobData) {
+	if myUuid.String() == k.getLeaderId() {
+		// Send update message
+		k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_UPDATE_STATE, Payload: &data}
+	}
+	k.jobsTable[data.JobId] = data
 }
 
 // connectWithFollowers makes the leader wait for all followers
@@ -147,17 +165,18 @@ func (k *masterKernel) handleNodeDeath(address string) {
 	msg := Event{Src: myUuid, Type: EV_NODE_DEATH, Payload: nodeUuid}
 	k.toConnbox <- msg
 	k.poisonJobs(nodeUuid)
-	k.relaunchPendingJobs()
 	delete(k.nodesByAddress, address)
 }
 
 // poisonJobs marks as pending all jobs related to the
 // node with the given uuid.
 func (k *masterKernel) poisonJobs(uuid string) {
-	for jobId, data := range k.jobsTable {
-		if (data.AssignedNode == uuid) && (data.JobStatus == JOB_RUNNING) {
-			data.JobStatus = JOB_PENDING
-			k.jobsTable[jobId] = data
+	// TODO: send update to other masters!
+	for _, job := range k.jobsTable {
+		if (job.AssignedNode == uuid) && (job.JobStatus == JOB_RUNNING) {
+			job.JobStatus = JOB_PENDING
+			job.LastUpdate = time.Now()
+			k.updateJobData(job)
 		}
 	}
 	delete(k.nodeResources, uuid)
@@ -170,8 +189,8 @@ func (k *masterKernel) poisonJobs(uuid string) {
 func (k *masterKernel) connectWithLeader() error {
 	logger.Logger.Info("Starting connection as follower master")
 	// First send own resources and jobs to the leader
-	myResources := make(map[string]NodeResourcesData)
-	myJobs := make(map[string]JobData)
+	myResources := k.nodeResources
+	myJobs := k.jobsTable
 	msg := &ConnectionMessage{myResources, myJobs}
 	event := Event{Src: myUuid, Type: EV_RES_F, Payload: msg}
 	k.toConnbox <- event
@@ -182,10 +201,11 @@ func (k *masterKernel) connectWithLeader() error {
 
 func (k *masterKernel) becomeLeader() {
 	// Upon becoming a leader, mark everything as JOB_PENDING
-	for jobId, data := range k.jobsTable {
-		if data.JobStatus == JOB_RUNNING {
-			data.JobStatus = JOB_PENDING
-			k.jobsTable[jobId] = data
+	for _, job := range k.jobsTable {
+		if job.JobStatus == JOB_RUNNING {
+			job.JobStatus = JOB_PENDING
+			job.LastUpdate = time.Now()
+			k.updateJobData(job)
 		}
 	}
 }
@@ -225,7 +245,8 @@ func (k *masterKernel) updateTablesWithJob(job JobData, isLaunched bool) {
 		assignedData.MemFree += job.MemUsage
 	}
 	k.nodeResources[assignedNode] = assignedData
-	k.jobsTable[job.JobId] = job
+	job.LastUpdate = time.Now()
+	k.updateJobData(job)
 }
 
 // --------------------- Functions for the server --------------------
@@ -257,12 +278,12 @@ func (k *masterKernel) getNodeResources() map[string]NodeResourcesData {
 // launchJob selects a node with enough resources for launching the job,
 // and forwards an Event with Type: EV_JOB_L to all connections via
 // the k.toConnbox. It returns the JobId of the created job.
-func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName string) string {
+func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName string) (string, error) {
 	// If ain't the leader, forward the job launch job
 	if k.getLeaderId() != myUuid.String() {
-		job := JobData{JobName: jobName, MemUsage: memUsage, ImageName: imageName}
+		job := JobData{JobName: jobName, MemUsage: memUsage, ImageName: imageName, LastUpdate: time.Now()}
 		k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_FF, Payload: job}
-		return "Job forwarded to leader, see /jobs"
+		return "", nil
 	}
 
 	assignedNode := ""
@@ -273,7 +294,7 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 		}
 	}
 	if assignedNode == "" {
-		return "Error, not enough resources on claud"
+		return "", fmt.Errorf("Error, not enough resources on claud to lauch job: %v", jobName)
 	}
 
 	logger.Logger.Info("Ordering " + assignedNode + " to launch a new job")
@@ -285,31 +306,41 @@ func (k *masterKernel) launchJob(jobName string, memUsage uint64, imageName stri
 	k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_L, Payload: job}
 	k.updateTablesWithJob(job, true)
 
-	return job.JobId
+	return job.JobId, nil
 }
 
 func (k *masterKernel) relaunchPendingJobs() {
-	for _, jobData := range k.jobsTable {
-		if jobData.JobStatus == JOB_PENDING {
-			assignedNode := ""
-			for uuid, data := range k.nodeResources {
-				if data.MemFree >= jobData.MemUsage {
-					assignedNode = uuid
-					break
-				}
-			}
-			if assignedNode == "" {
-				logger.Logger.Error("Not enough resources on claud to launch pending job: " + jobData.JobId)
-				continue
-			}
+	if myUuid.String() != k.getLeaderId() {
+		return
+	}
 
-			logger.Logger.Info("Reassigning job " + jobData.JobId + " to node " + assignedNode)
-			jobData.AssignedNode = assignedNode
-			jobData.JobStatus = JOB_RUNNING
-			jobData.JobName += "x" // Only for testing on same machine!
-			k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_L, Payload: jobData}
-			k.updateTablesWithJob(jobData, true)
+	logger.Logger.Info("Relaunching Jobs")
+	now := time.Now()
+	for _, job := range k.jobsTable {
+
+		// Skip any job that is not pending
+		if job.JobStatus != JOB_PENDING {
+			continue
 		}
+
+		// Skip if job has been updated recently
+		// TODO: unhardcode this
+		timeSinceLastUpdate := now.Sub(job.LastUpdate)
+		if timeSinceLastUpdate.Seconds() < 20 {
+			continue
+		}
+
+		if _, err := k.launchJob(job.JobName, job.MemUsage, job.ImageName); err != nil {
+			logger.Logger.Error(err.Error())
+			continue
+		}
+
+		logger.Logger.Info("Marking job " + job.JobId + " as Lost")
+		job.JobStatus = JOB_LOST
+		k.updateJobData(job)
+		// TODO: CRITICAL: advertise this change in job to other master
+		// k.toConnbox <- Event{Src: myUuid, Type: EV_JOB_L, Payload: job}
+		// k.updateTablesWithJob(job, true)
 	}
 }
 
@@ -353,6 +384,9 @@ func (k *masterKernel) eventLoop() {
 
 		case address := <-k.deadNode:
 			k.handleNodeDeath(address)
+
+		case <-k.reescheduleTicker.C:
+			k.relaunchPendingJobs()
 		}
 	}
 }
@@ -423,6 +457,13 @@ func (k *masterKernel) handleEventOnFollower(msg connbox.Message) {
 		}
 		logger.Logger.Info("Detected the node " + uuid + " has died")
 		k.poisonJobs(uuid)
+	case EV_JOB_UPDATE_STATE:
+		jobData, ok := e.Payload.(JobData)
+		if !ok {
+			logger.Logger.Error("Received something strange as job data")
+			return
+		}
+		k.updateJobData(jobData)
 	default:
 		// Should never happen
 		logger.Logger.Error("Received wrong Event type!")

@@ -290,6 +290,8 @@ func (k *slaveKernel) handleEventOnFollower(msg connbox.Message) {
 		}
 	case EV_NODE_DEATH:
 		return
+	case EV_JOB_UPDATE_STATE:
+		return
 	default:
 		// Should never happen
 		logger.Logger.Error("Received wrong Event type!")

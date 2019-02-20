@@ -2,6 +2,7 @@ package common
 
 import (
 	"github.com/satori/go.uuid"
+	"time"
 )
 
 type EventType int
@@ -11,6 +12,7 @@ const (
 	EV_ACK
 	EV_RES_F
 	EV_RES_L
+	EV_JOB_UPDATE_STATE // Message from leader to slaves to update job state
 	EV_JOB_L
 	EV_JOB_FF
 	EV_JOBEND_L
@@ -42,6 +44,7 @@ const (
 	JOB_FINISHED
 	JOB_FAILED
 	JOB_PENDING
+	JOB_LOST
 )
 
 func (js JobState) String() string {
@@ -50,6 +53,7 @@ func (js JobState) String() string {
 		"FINISHED",
 		"FAILED",
 		"PENDING",
+		"LOST",
 	}
 	return strMap[js]
 }
@@ -62,6 +66,7 @@ type JobData struct {
 	AssignedNode string
 	JobId        string
 	JobStatus    JobState
+	LastUpdate   time.Time
 }
 
 type ConnectionMessage struct {
