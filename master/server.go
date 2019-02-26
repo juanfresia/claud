@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
+	. "github.com/juanfresia/claud/common"
 	"github.com/satori/go.uuid"
 	"io/ioutil"
 	"net/http"
@@ -23,9 +24,9 @@ type MasterServer struct {
 
 // newMasterServer creates a new MasterServer with an already
 // initialized masterKernel.
-func newMasterServer(mem uint64, clusterSize uint) *MasterServer {
+func newMasterServer(clusterSize uint) *MasterServer {
 	m := &MasterServer{}
-	m.kernel = newMasterKernel(mem, clusterSize)
+	m.kernel = newMasterKernel(clusterSize)
 	return m
 }
 
@@ -45,7 +46,7 @@ func (m *MasterServer) getLeaderStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	leaderStatusData := make(map[string]string)
-	leaderStatusData["leader_status"] = m.kernel.getLeaderState()
+	leaderStatusData["leader_status"] = m.kernel.getNodeState()
 	leaderStatusData["leader_UUID"] = m.kernel.getLeaderId()
 	w.WriteHeader(http.StatusOK)
 	response, _ := json.Marshal(leaderStatusData)
@@ -57,15 +58,16 @@ func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	aliveMasters := m.kernel.getMasters()
-	masterResources := m.kernel.getMastersResources()
 	masterDataArray := make([]interface{}, len(aliveMasters))
+	leaderId := m.kernel.getLeaderId()
 	i := 0
 	for _, uuid := range aliveMasters {
 		thisMasterData := make(map[string]interface{})
 		thisMasterData["UUID"] = uuid
-		if resourceData, present := masterResources[uuid]; present {
-			thisMasterData["free_memory"] = resourceData.MemFree
-			thisMasterData["total_memory"] = resourceData.MemTotal
+		if uuid == leaderId {
+			thisMasterData["status"] = "LEADER"
+		} else {
+			thisMasterData["status"] = "NOT LEADER"
 		}
 		masterDataArray[i] = thisMasterData
 		i += 1
@@ -75,6 +77,39 @@ func (m *MasterServer) getAliveMasters(w http.ResponseWriter, r *http.Request) {
 	aliveMastersResponse["alive_masters"] = masterDataArray
 
 	response, _ := json.Marshal(aliveMastersResponse)
+	w.WriteHeader(http.StatusOK)
+	w.Write(response)
+}
+
+// getAliveMasters prints a nice list of all masters in the cluster.
+func (m *MasterServer) getSlavesData(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	nodeResources := m.kernel.getNodeResources()
+	slaveResources := make(map[string]NodeResourcesData)
+	for uuid, resourceData := range nodeResources {
+		slaveResources[uuid] = resourceData
+	}
+	// Skip nodes that are masters <- Leave or not?
+	aliveMasters := m.kernel.getMasters()
+	for _, uuid := range aliveMasters {
+		delete(slaveResources, uuid)
+	}
+	slaveDataArray := make([]interface{}, len(slaveResources))
+	i := 0
+	for uuid, resourceData := range slaveResources {
+		thisNodeData := make(map[string]interface{})
+		thisNodeData["UUID"] = uuid
+		thisNodeData["free_memory"] = resourceData.MemFree
+		thisNodeData["total_memory"] = resourceData.MemTotal
+		slaveDataArray[i] = thisNodeData
+		i += 1
+	}
+
+	slavesDataResponse := make(map[string]interface{})
+	slavesDataResponse["alive_slaves"] = slaveDataArray
+
+	response, _ := json.Marshal(slavesDataResponse)
 	w.WriteHeader(http.StatusOK)
 	w.Write(response)
 }
@@ -91,8 +126,9 @@ func (m *MasterServer) getJobsList(w http.ResponseWriter, r *http.Request) {
 		thisJobData["job_full_name"] = data.JobName + "-" + data.JobId
 		thisJobData["job_id"] = data.JobId
 		thisJobData["image"] = data.ImageName
-		thisJobData["asigned_master"] = data.AssignedMaster
+		thisJobData["asigned_slave"] = data.AssignedNode
 		thisJobData["status"] = data.JobStatus.String()
+		thisJobData["last_update"] = data.LastUpdate.String()
 
 		jobsDataArray[i] = thisJobData
 		i += 1
@@ -151,30 +187,40 @@ func (m *MasterServer) launchNewJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if m.kernel.getLeaderId() != myUuid.String() {
-		// TODO: Forward to master leader somehow
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte("{\"message\": \"Not the leader\"}"))
+	// If there is no leader, should not launch job
+	if m.kernel.getLeaderId() == "NO LEADER" {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("{\"message\": \"Cannot launch job because cluster is on anarchy\"}"))
 		return
 	}
-	// TODO: refactor this to pass only one job type element
-	jobId := m.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
+
+	jobId, err := m.kernel.launchJob(newJob.Name, newJob.Mem, newJob.Image)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte("{\"error\": \"" + err.Error() + "\"}"))
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("{\"job_id\": \"" + jobId + "\"}"))
+	if jobId == "" {
+		w.Write([]byte("{\"status\": \"Job creation forwarded to the leader\"}"))
+	} else {
+		w.Write([]byte("{\"job_id\": \"" + jobId + "\"}"))
+	}
 }
 
 // --------------------------- Main function ---------------------------
 
 // LaunchMaster starts a master on the given IP and port.
 // TODO: replace these many parameters with a MasterKernelConfig struct or something like that
-func LaunchMaster(masterIp, port string, mem uint64, mastersTotal uint) {
+func LaunchMaster(masterIp, port string, mastersTotal uint) {
 	myUuid = uuid.NewV4()
-	m := newMasterServer(mem, mastersTotal)
+	m := newMasterServer(mastersTotal)
 	server := mux.NewRouter()
 
 	server.HandleFunc("/", m.getMyStatus).Methods("GET")
 	server.HandleFunc("/masters", m.getAliveMasters).Methods("GET")
+	server.HandleFunc("/slaves", m.getSlavesData).Methods("GET")
 	server.HandleFunc("/leader", m.getLeaderStatus).Methods("GET")
 	server.HandleFunc("/jobs", m.getJobsList).Methods("GET")
 	server.HandleFunc("/jobs", m.launchNewJob).Methods("POST")

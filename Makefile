@@ -17,8 +17,9 @@ all: fmt
 .PHONY: all
 
 fmt:
+	echo "Scanning files with linter..."
 	go fmt ./...
-	go vet ./...
+	go vet -composites=false ./...
 .PHONY: fmt
 
 docker:
