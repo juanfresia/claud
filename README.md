@@ -67,7 +67,7 @@ Free and academic cluster developed in Golang 1.11 by Fresia Juan Manuel & Aleja
    % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current Dload  Upload   Total   Spent    Left  Speed
    100    50  100    50    0     0  50000      0 --:--:-- --:--:-- --:--:-- 50000
    {
-   "my_UUID": "42d47c7e-9e7a-4d13-a9b9-d1f9f03e2c75"
+      "my_UUID": "42d47c7e-9e7a-4d13-a9b9-d1f9f03e2c75"
    }
    :~$ curl localhost:8088/masters | jq
    % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current Dload  Upload   Total   Spent    Left  Speed
@@ -91,7 +91,7 @@ Free and academic cluster developed in Golang 1.11 by Fresia Juan Manuel & Aleja
    
    ```
    
-   7. For launching a job, you will first need to launch slave nodes. Launch as many desired slaves with the `slave` command (Note each slave node must be launched on a different IP:Port pair). You may need to launch them with `sudo`to properly run jobs with Docer. You can check the command's help with `./claud help slave`:
+7. For launching a job, you will first need to launch slave nodes. Launch as many desired slaves with the `slave` command (Note each slave node must be launched on a different IP:Port pair). You may need to launch them with `sudo`to properly run jobs with Docer. You can check the command's help with `./claud help slave`:
 
    ```bash
    :~$ ./claud help slave
