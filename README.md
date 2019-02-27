@@ -28,6 +28,7 @@ Free and academic cluster developed in Golang 1.11 by Fresia Juan Manuel & Aleja
    Available Commands:
      help        Help about any command
      master      Launches claud master process
+     slave       Launches claud slave process
      version     Print version and build status
    
    Flags:
@@ -50,25 +51,99 @@ Free and academic cluster developed in Golang 1.11 by Fresia Juan Manuel & Aleja
    Flags:
      -h, --help          help for master
      -i, --ip string     IP to run the master HTTP server (default "localhost")
+     -n, --masters-total uint   Total number of masters to consider in the cluster (default 3)
      -p, --port string   Port to run the master HTTP server (default "8081")
    :~$ ./claud master -i localhost -p 8088
    Launching master process...
+   CLUSTER SIZE: 2
+   Master Kernel is up!
    
    ```
 
-6. Once all desired masters are up, you can make HTTP requests to them. The three supported endpoints for now are _/_, _/masters_ and _/leader_ with GET methods:
+6. Once all desired masters are up, you can make HTTP requests to them. The supported endpoints are: _/_, _/masters_, _/leader_, _/slaves_ and _/jobs_:
 
    ```bash
-   :~$ curl localhost:8088/
-   Hi there, I am master 6e67dd68-f115-4857-a736-0629c33b384d
-   :~$ curl localhost:8088/masters
-   ALIVE MASTER NODES
-   UUID: 6e67dd68-f115-4857-a736-0629c33b384d IP:PORT: 192.168.1.49:46555
-   UUID: 4f679970-1d55-4dcb-ac44-efde6a2be519 IP:PORT: 192.168.1.49:45694
-   UUID: 78650510-642d-42bb-9bf2-a76a51c71e02 IP:PORT: 192.168.1.49:42486
-   :~$ curl localhost:8088/leader
-   My leader status: NOT LEADER
-   Leader UUID is: 4f679970-1d55-4dcb-ac44-efde6a2be519
-   :~$ 
+   :~$ curl localhost:8088/ | jq
+   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current Dload  Upload   Total   Spent    Left  Speed
+   100    50  100    50    0     0  50000      0 --:--:-- --:--:-- --:--:-- 50000
+   {
+   "my_UUID": "42d47c7e-9e7a-4d13-a9b9-d1f9f03e2c75"
+   }
+   :~$ curl localhost:8088/masters | jq
+   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current Dload  Upload   Total   Spent    Left  Speed
+   100   225  100   225    0     0   219k      0 --:--:-- --:--:-- --:--:--  219k
+   {
+   "alive_masters": [
+      {
+         "UUID": "1e3ac627-07f9-46cc-b4ac-1564977cb3eb",
+         "status": "LEADER"
+      },
+      {
+         "UUID": "42d47c7e-9e7a-4d13-a9b9-d1f9f03e2c75",
+         "status": "NOT LEADER"
+      },
+      {
+         "UUID": "e81da3da-3cd1-484e-9138-f7addac82f54",
+         "status": "NOT LEADER"
+      }
+      ] 
+   }
    
+   ```
+   
+   7. For launching a job, you will first need to launch slave nodes. Launch as many desired slaves with the `slave` command (Note each slave node must be launched on a different IP:Port pair). You may need to launch them with `sudo`to properly run jobs with Docer. You can check the command's help with `./claud help slave`:
+
+   ```bash
+   :~$ ./claud help slave
+   Launches claud slave process
+   
+   Usage:
+     claud slave [flags]
+   
+   Flags:
+     -h, --help               help for slave
+     -i, --ip string          IP to run the slave HTTP server (default "localhost")
+     -n, --masters-total uint Total number of masters to consider in the cluster (default 3)
+     -m, --memory uint        Memory size (in KiB) yielded to claud for running processes (default 1024)
+     -p, --port string        Port to run the slave HTTP server (default "8081")
+   :~$ sudo ./claud slave -p 8090 -m 2048
+   Launching slave process...
+   CLUSTER SIZE: 2
+   Slave Kernel is up!
+
+   ```
+
+8. Write the information of any job you wish to launch in a JSON formatted file like the following:
+
+   ```json
+   {
+      "mem": 700,
+      "name": "myFirstJob",
+      "image": "nginx"
+   }
+   ```
+9. Perform the proper HTTP requests to the _/jobs_ endpoint of any master of the cluster for properly launching, seeing or stopping jobs:
+
+   ```bash
+   :~$ curl -X POST -d @YOUR_JSON_FILE localhost:8081/jobs | jq
+   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current Dload  Upload   Total   Spent    Left  Speed
+   100   106  100    50  100    56  10000  11200 --:--:-- --:--:-- --:--:-- 21200
+   {
+      "job_id": "0eb26758-427d-4c67-83f6-e6a16b9e57e5"
+   }
+   :~$ curl -X GET localhost:8081/jobs | jq
+   % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current Dload  Upload   Total   Spent    Left  Speed
+   100   570  100   570    0     0   556k      0 --:--:-- --:--:-- --:--:--  556k
+   {
+      "jobs": [
+         {
+            "asigned_slave": "87a1eb99-515e-4ae5-bfcd-8c6e3026418b",
+            "image": "nginx",
+            "job_full_name": "myFirstJob-0eb26758-427d-4c67-83f6-e6a16b9e57e5",
+            "job_id": "0eb26758-427d-4c67-83f6-e6a16b9e57e5",
+            "last_update": "2019-02-26 21:50:35.951750705 -0300 -03 m=+1262.201623451",
+            "status": "RUNNING"
+         }
+      ]
+   }
    ```
