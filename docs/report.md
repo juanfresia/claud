@@ -35,6 +35,19 @@ whole architecture:
 
 ![](img/architecture.jpg)
 
+# Masters leader election
+
+The masters leader election is based on a very simple algorithm, in which the master
+with the lowest ID is considered as the leader of the cluster. To successfully perform
+that election, a discovery protocol must take part and all nodes have to announce
+themselves via an UDP broadcast address. Then, after a certain amount of time, all
+masters know which nodes are participating on the leader election, and can pick the
+proper leader based on their IDs. The figure belows represent this situation:
+
+![](img/leader_election.jpg)
+
+# Nodes state reconciliation
+
 Two options where considered when discussing which kind of information should
 the master nodes maintain: 1) every master has a global view of the state of the
 cluster, and 2) every master knows only a subset of tasks and slave nodes.
@@ -60,12 +73,6 @@ kept in two in-memory tables:
     track of resources of each node.
   - **Job list**: lists all the jobs in the cluster, its state and which node
     is currently running in.
-
-# Masters leader election
-
-## Nodes state reconciliation
-// Explain how leader election works, relevant timeouts, why we choose those
-timeouts, give information on how reconciliation works
 
 # Job lifecycle
 // Explain the different states of the job, and how transition occurs
