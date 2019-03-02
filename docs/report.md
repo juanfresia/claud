@@ -46,6 +46,19 @@ proper leader based on their IDs. The figure belows represent this situation:
 
 ![](img/leader_election.jpg)
 
+Once the leader has been elected, it becomes responsible of managing all operations 
+that change the clusters state, such as launching, stopping or rescheduling jobs.
+Additionally, the leader also forwards such information to the other masters, thus
+ensuring a global cluster state. Hence, it is _not_ necessary for the masters to
+perform a new leader election every time a new master joins or leaves the cluster,
+because the current cluster leader is already capable of handling the cluster state.
+Then, only after a failure of that cluster leader a new leader election will be needed.
+We chose, however, to forcefully set the cluster to an "inoperating state" (no more
+jobs can be launched) if more than half of the original master nodes fail. We considered
+this a good way of ensuring enough masters are always up while making changes to the
+cluster state. We also opted to always trigger a leader election after the cluster 
+recovering from this inoperating state.
+
 # Nodes state reconciliation
 
 Two options where considered when discussing which kind of information should
