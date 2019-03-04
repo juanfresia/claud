@@ -74,18 +74,41 @@ new job really hard.
 Option 1 is really well suited for that, since any master can see at a glance
 which resources are available because all of them store the global state. The
 trick here is how to maintain that state consistent upon failure of any of the
-members of the cluster. We took some time considering such edge cases and arrived 
-to the conclusion that it would be manageable with proper state reconciliation (see
-bellow).
+members of the cluster. We took some time considering many edge cases and arrived 
+to the conclusion that it would be manageable with proper state reconciliation.
 
 Following this reasoning, we opted for option 1. Consequently, each master node
 contains all the information of the state of the cluster. This information is
 kept in two in-memory tables:
 
-  - **Alive nodes**: lists every node, master or slave, in the cluster. Keeps
-    track of resources of each node.
+  - **Alive nodes**: lists every node in the cluster. Keeps track of resources 
+    on each node.
   - **Job list**: lists all the jobs in the cluster, its state and which node
     is currently running in.
+
+This way, every time a new job needs to be launched, the leader of the cluster can
+easily schedule (i.e. look for a node with enough resources) and launch it. Moreover,
+whenever a slave node running one or more jobs fails, the leader can reschedule that
+job on any other node of the cluster. This can be easily accomplished by constantly
+looking after the updates of the alive nodes table, and checking for jobs running on
+failing nodes on the job list:
+
+![](img/job_reschedule.jpg)
+
+In order to keep this global state consistent, the leader of the cluster must forward
+all write requests to the other master nodes. The other masters will then update their
+state and, as long as the leader does not fail, the state of the cluster will remain
+consistent. In case of a failure of the leader node, a new election will be triggered
+between all masters, and the new leader will have to validate its own state against
+the other nodes (since the leader could have failed while the cluster state was being
+updated). 
+
+For such state reconciliation, we chose to _trust each node about their own state_. For
+example, if the new leader thinks some slave is running a job but that slave reports
+back it is not, then the new leader will update its state in concordance with that. This
+combined with the different states a job can have during its lifecycle (explained on
+next section) allows the cluster to face and solve many different problems, ensuring a
+consistent global state.
 
 # Job lifecycle
 // Explain the different states of the job, and how transition occurs
