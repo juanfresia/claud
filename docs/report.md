@@ -140,6 +140,20 @@ job messages are sent:
 
 ![](img/jobs_pending.jpg)
 
+Now, if the leader were to fail right after sending the job message to the masters but 
+before sending it to the slave node, the job data would still remain on the remaining
+masters. After the leader election, since that job could either be or not running (because
+the job may or may not have been scheduled, and the slave node may or may not have failed)
+all masters would have to mark that job on their jobs lists as on _pending state_. This
+way, during state reconciliation the leader can change the pending jobs to running ones
+if slaves nodes really report to have them (remember we chose to trust each node about
+their own state).
+
+On the other hand, we made the leader to periodically check on pending jobs remaining
+and reschedule them. Then, if some time has elapsed and the slave that was supposedly
+running some job has not reported it, that pending job on that node is marked as _lost_
+and a new job with the same data is rescheduled on another slave.
+
 # Conclusions
 
 To sum up, we were able to successfully develop from scratch the proposed
