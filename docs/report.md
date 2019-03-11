@@ -111,9 +111,34 @@ next section) allows the cluster to face and solve many different problems, ensu
 consistent global state.
 
 # Job lifecycle
-// Explain the different states of the job, and how transition occurs
 
-//# Problems identified solved
+As it would be expected, jobs on the cluster can have different states depending on the
+possible node failures. On the most optimistic scenario, a job can be scheduled and remain
+running forever on a never-failing node. We called this "working" state as _running state_ 
+and it is really desired to have all jobs on this state most of the time. 
+
+When a slave node running a job fails, the leader of the cluster should reallocate such 
+job on another slave node as discussed on the previous section. Since all nodes are constantly 
+listening to the broadcast address, detecting such failure and rescheduling the jobs is not
+really that hard. However, in order to keep the global state consistent, the leader must
+forward the "launching job" message to all the other master nodes, because it is a request
+that changes the state of the cluster. At this point, many edgy cases can be considered and
+discussed, and many solutions can be designed to solve all of them. Since our cluster relies
+on a master leader node, the main problem we tried to address was considering this special
+node failure. 
+
+Hence, we came to notice that, if the leader master were to fail _just after scheduling the job_, 
+this could led to some inconsistent state on the cluster or the loss of that job data. Since the
+leader failure would trigger a new leader election and state reconciliation between all nodes,
+if the leader were to fail after sending some "launch job" message to a slave node such slave 
+would be the only node on the cluster knowing about the existence of that job. Then, if that
+slave were also to fail before the leader election finished, the job would end being lost. To
+prevent that, we considered having the leader node forwarding the job message to the master
+nodes _before_ actually sending it to the slave node. The picture below shows how this job data
+could be lost or preserved on the other master nodes just by changing the order in which the
+job messages are sent:
+
+![](img/jobs_pending.jpg)
 
 # Conclusions
 
